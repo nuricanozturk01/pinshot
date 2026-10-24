@@ -1,0 +1,34 @@
+[project]
+name = "pinshot"
+dynamic = ["version"]
+description = "Cross-platform screenshot, annotate, OCR and pin-to-screen tool"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9,<3.13"
+dependencies = [
+  "PySide6-Essentials>=6.6,<7",
+  "pynput>=1.7.6",
+  # offline OCR; no onnxruntime wheels for Windows on ARM
+  "rapidocr_onnxruntime>=1.3.24; not (sys_platform == 'win32' and platform_machine == 'ARM64')",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.10", "pillow>=10"]
+test = ["pytest>=8", "pillow>=10"]
+
+[project.scripts]
+pinshot = "pinshot.app:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pinshot"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pinshot.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
