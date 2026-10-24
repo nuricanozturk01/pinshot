@@ -85,13 +85,27 @@ def open_sound_settings():
 
 
 def _loopback_source(sc):
+    """The source that carries what the default output plays.
+
+    Never use `get_microphone(speaker.name, include_loopback=True)`: it matches by *name*, and a Bluetooth headset in
+    Hands-free mode calls both its microphone and its output "<headset name>", so it returned the microphone and the
+    "system sound" was silent. Choose among real loopback sources, by id first."""
     if sys.platform == "darwin":       # no native loopback: accept a known virtual device
         for m in sc.all_microphones():
             if any(k in m.name.lower() for k in ("blackhole", "loopback", "soundflower")):
                 return m
         return None
     speaker = sc.default_speaker()
-    return sc.get_microphone(speaker.name, include_loopback=True)
+    loops = [m for m in sc.all_microphones(include_loopback=True) if getattr(m, "isloopback", False)]
+    sid, sname = str(speaker.id), str(speaker.name)
+    for test in (lambda m: str(m.id) == sid + ".monitor",              # PulseAudio / PipeWire convention
+                 lambda m: str(m.id) == sid,                           # WASAPI loopback shares the speaker's id
+                 lambda m: m.name == "Monitor of " + sname,
+                 lambda m: m.name == sname):
+        for m in loops:
+            if test(m):
+                return m
+    return None
 
 
 def list_microphones() -> list[str]:
@@ -121,7 +135,9 @@ def _mic_source(sc, name: str = ""):
 class AudioRecorder:
     def __init__(self, system: bool, mic: bool, mic_name: str = ""):
         self.mic_name = mic_name
-        self.want = [("system", system), ("mic", mic)]
+        # Microphone first: opening a Bluetooth headset's mic switches it from A2DP to Hands-free (HFP), which replaces
+        # the output device. System sound must be opened after that, on the device that exists then.
+        self.want = [("mic", mic), ("system", system)]
         self.tracks: list[Track] = []
         self._threads: list[threading.Thread] = []
         self._stop = threading.Event()
@@ -149,32 +165,77 @@ class AudioRecorder:
         return self.warnings
 
     def _run(self, kind: str, track: Track, ready: threading.Event) -> None:
+        """Record one source into its PCM file. Reopens the device if it disappears or (system sound) the default
+        output changes, e.g. when a Bluetooth headset switches profile in the middle of a recording."""
+        failures = 0
         try:
             import numpy as np
             import soundcard as sc  # type: ignore
-            src = _loopback_source(sc) if kind == "system" else _mic_source(sc, self.mic_name)
-            if src is None:
-                raise RuntimeError("kaynak bulunamadı")
-            ch = max(1, min(2, len(src.channels) if hasattr(src.channels, "__len__") else int(src.channels)))
-            track.channels = ch
-            with open(track.path, "wb") as f, src.recorder(samplerate=RATE, channels=ch, blocksize=BLOCK) as rec:
-                with self._lock:
-                    self._files[track.path] = f
-                track.started = time.monotonic()
-                ready.set()
-                while not self._stop.is_set():
-                    data = rec.record(numframes=BLOCK)           # float32, shape (n, ch)
-                    pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
-                    with self._lock:
-                        if f.closed:
-                            break
-                        f.write(pcm)
-                        track.nbytes += len(pcm)
+            f = open(track.path, "wb")
+            with self._lock:
+                self._files[track.path] = f
+            if kind == "system":
+                self._settle(sc)
+            while not self._stop.is_set():
+                try:
+                    src = _loopback_source(sc) if kind == "system" else _mic_source(sc, self.mic_name)
+                    if src is None:
+                        raise RuntimeError("kaynak bulunamadı")
+                    ch = max(1, min(2, len(src.channels) if hasattr(src.channels, "__len__") else int(src.channels)))
+                    if not track.started:
+                        track.channels = ch
+                    opened_for = self._default_output_id(sc) if kind == "system" else None
+                    with src.recorder(samplerate=RATE, channels=track.channels, blocksize=BLOCK) as rec:
+                        if not track.started:
+                            track.started = time.monotonic()
+                        ready.set()
+                        failures = 0
+                        last_check = time.monotonic()
+                        while not self._stop.is_set():
+                            data = rec.record(numframes=BLOCK)           # float32, shape (n, ch)
+                            pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+                            with self._lock:
+                                if f.closed:
+                                    return
+                                f.write(pcm)
+                                track.nbytes += len(pcm)
+                            if kind == "system" and time.monotonic() - last_check > 1.0:
+                                last_check = time.monotonic()
+                                if self._default_output_id(sc) != opened_for:
+                                    log.info("default output changed: reopening the system-sound source")
+                                    break                                # leave the `with`, reopen on the new device
+                except Exception as ex:  # noqa: BLE001
+                    failures += 1
+                    if not track.started and failures >= 2:              # never opened: report it
+                        raise
+                    if failures > 25:
+                        raise
+                    log.warning("audio %s interrupted (%s); retrying", kind, ex)
+                    self._stop.wait(0.4)
         except Exception as ex:  # noqa: BLE001
             track.error = str(ex) or type(ex).__name__
             log.warning("audio source %s failed: %s", kind, track.error)
         finally:
             ready.set()
+
+    @staticmethod
+    def _default_output_id(sc) -> str:
+        try:
+            return sc.default_speaker().id
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _settle(self, sc, quiet: float = 0.7, limit: float = 3.0) -> None:
+        """Wait until the default output stops changing (a headset profile switch takes a moment)."""
+        end = time.monotonic() + limit
+        last, since = self._default_output_id(sc), time.monotonic()
+        while time.monotonic() < end and not self._stop.is_set():
+            time.sleep(0.1)
+            cur = self._default_output_id(sc)
+            if cur != last:
+                last, since = cur, time.monotonic()
+            elif time.monotonic() - since >= quiet:
+                return
 
     def request_stop(self) -> None:
         self._stop.set()

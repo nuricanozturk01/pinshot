@@ -1,0 +1,169 @@
+"""AudioRecorder against fake `soundcard` devices (no sound hardware needed)."""
+import sys
+import threading
+import time
+import types
+
+import numpy as np
+import pytest
+
+from pinshot.audio import AudioRecorder
+
+
+class FakeRecorder:
+    def __init__(self, dev, channels, log):
+        self.dev, self.channels, self.log = dev, channels, log
+
+    def __enter__(self):
+        self.log.append(("open", self.dev.id))
+        return self
+
+    def __exit__(self, *a):
+        self.log.append(("close", self.dev.id))
+
+    def record(self, numframes):
+        time.sleep(numframes / 48000)
+        if self.dev.dead:
+            raise RuntimeError("stream disconnected")
+        return np.full((numframes, self.channels), self.dev.level, dtype="float32")
+
+
+class FakeDevice:
+    def __init__(self, id, name, level=0.25, loop=False, channels=2):
+        self.id, self.name, self.level, self.isloopback, self.dead = id, name, level, loop, False
+        self.channels = list(range(channels))
+        self.log = None
+
+    def recorder(self, samplerate, channels, blocksize):
+        return FakeRecorder(self, channels, self.log)
+
+
+class FakeSC(types.ModuleType):
+    def __init__(self):
+        super().__init__("soundcard")
+        self.log = []
+        self.sink = "sink-a2dp"                       # id of the current default output
+        self.mic = FakeDevice("mic1", "Headset Mic", 0.5)
+        self.monitors = {"sink-a2dp": FakeDevice("sink-a2dp.monitor", "Monitor A", 0.2, True),
+                         "sink-hfp": FakeDevice("sink-hfp.monitor", "Monitor B", 0.3, True)}
+        for d in [self.mic, *self.monitors.values()]:
+            d.log = self.log
+
+    def default_speaker(self):
+        return types.SimpleNamespace(id=self.sink, name=self.sink)
+
+    def get_microphone(self, id, include_loopback=False):
+        """Like the real library: matches by NAME, mics first. (This is what picked the headset mic.)"""
+        for m in self.all_microphones(include_loopback):
+            if m.name == id or m.id == id:
+                return m
+        raise IndexError(id)
+
+    def all_microphones(self, include_loopback=False):
+        return [self.mic] + (list(self.monitors.values()) if include_loopback else [])
+
+    def default_microphone(self):
+        return self.mic
+
+
+@pytest.fixture
+def fake(monkeypatch):
+    sc = FakeSC()
+    monkeypatch.setitem(sys.modules, "soundcard", sc)
+    return sc
+
+
+def _peaks(track):
+    data = np.frombuffer(open(track.path, "rb").read(), dtype="<i2")
+    return data
+
+
+def test_records_mic_and_system(fake):
+    rec = AudioRecorder(True, True)
+    assert rec.start() == []
+    time.sleep(0.6)
+    rec.request_stop()
+    tracks = rec.finish()
+    assert {t.label for t in tracks} == {"Sistem sesi", "Mikrofon"}
+    assert all(t.nbytes > 0 for t in tracks)
+    AudioRecorder.discard(tracks)
+
+
+def test_microphone_is_opened_before_system_sound(fake):
+    """Opening a Bluetooth mic switches the headset to HFP and replaces the output: system sound must come second."""
+    rec = AudioRecorder(True, True)
+    rec.start()
+    rec.request_stop()
+    AudioRecorder.discard(rec.finish())
+    opens = [d for kind, d in fake.log if kind == "open"]
+    assert opens[0] == "mic1" and opens[1].startswith("sink-")
+
+
+def test_system_sound_follows_the_default_output_when_it_changes(fake):
+    """Headset switches A2DP -> HFP while recording: the old sink vanishes, capture must continue on the new one."""
+    rec = AudioRecorder(True, False)
+    rec.start()
+    time.sleep(0.5)
+    fake.monitors["sink-a2dp"].dead = True            # old output disappears...
+    fake.sink = "sink-hfp"                            # ...and a new default output appears
+    time.sleep(2.4)
+    rec.request_stop()
+    tracks = rec.finish()
+    assert tracks, "recording must survive the switch"
+    opened = [d for kind, d in fake.log if kind == "open"]
+    assert "sink-hfp.monitor" in opened, opened
+    data = _peaks(tracks[0])
+    assert (np.abs(data) > 0.28 * 32767).any()        # samples from the new device (level 0.3) are in the file
+    AudioRecorder.discard(tracks)
+
+
+def test_system_sound_recovers_from_a_dropped_stream(fake):
+    rec = AudioRecorder(True, False)
+    rec.start()
+    time.sleep(0.4)
+    dev = fake.monitors["sink-a2dp"]
+    dev.dead = True
+    threading.Timer(0.8, lambda: setattr(dev, "dead", False)).start()      # device comes back
+    time.sleep(2.0)
+    rec.request_stop()
+    tracks = rec.finish()
+    assert tracks and tracks[0].nbytes > 48000 * 2 * 2 * 1.0                # more than a second of audio in total
+    AudioRecorder.discard(tracks)
+
+
+def test_unavailable_source_is_reported_not_raised(fake, monkeypatch):
+    monkeypatch.setattr(fake, "all_microphones", lambda include_loopback=False: [])
+    # like PulseAudio with no real input: the "default microphone" is just a monitor source
+    monkeypatch.setattr(fake, "default_microphone", lambda: fake.monitors["sink-a2dp"])
+    rec = AudioRecorder(False, True)
+    warnings = rec.start()
+    assert warnings and "Mikrofon" in warnings[0]
+    rec.finish()
+
+
+def test_system_sound_never_picks_the_microphone_when_names_collide(fake):
+    """Bluetooth Hands-free: the headset's mic and its output carry the same name. System sound must still use the
+    output's monitor, not the microphone (that produced silence)."""
+    fake.mic = FakeDevice("bluez_input.X.0", "soundcore Space One Pro", 0.0)          # silent mic, same name
+    fake.mic.log = fake.log
+    fake.sink = "bluez_output.X.1"
+    fake.default_speaker = lambda: types.SimpleNamespace(id=fake.sink, name="soundcore Space One Pro")
+    mon = FakeDevice("bluez_output.X.1.monitor", "Monitor of soundcore Space One Pro", 0.4, True)
+    mon.log = fake.log
+    fake.monitors = {"bluez_output.X.1": mon}
+    from pinshot.audio import _loopback_source
+    assert _loopback_source(fake) is mon
+    rec = AudioRecorder(True, False)
+    rec.start()
+    time.sleep(0.5)
+    rec.request_stop()
+    tracks = rec.finish()
+    assert tracks
+    assert (np.abs(_peaks(tracks[0])) > 0.3 * 32767).any()                    # real playback level, not the silent mic
+    AudioRecorder.discard(tracks)
+
+
+def test_system_sound_unavailable_when_only_microphones_exist(fake):
+    from pinshot.audio import _loopback_source
+    fake.monitors = {}
+    assert _loopback_source(fake) is None

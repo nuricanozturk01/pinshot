@@ -1,4 +1,8 @@
-# PinShot
+<p align="center">
+  <img src="assets/icon.png" alt="PinShot icon" width="128" height="128">
+</p>
+
+<h1 align="center">PinShot</h1>
 
 Capture part of your screen, mark it up, copy it, or keep it floating above your other windows. You can also record the screen as
 an MP4 or a GIF. Works on Windows, macOS and Linux.
