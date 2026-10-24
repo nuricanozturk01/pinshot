@@ -69,10 +69,13 @@ def run(outfile: str | None) -> int:
         return "overlay"
 
     def ocr() -> str:
+        import platform
         try:
             import rapidocr_onnxruntime  # noqa: F401
         except ImportError:
-            return "skipped (engine not bundled on this platform)"
+            if sys.platform == "win32" and platform.machine().upper() == "ARM64":
+                return "skipped (no onnxruntime wheels for Windows ARM64)"
+            raise                                   # a missing engine anywhere else is a packaging bug
         from .ocr import recognize
         img = QImage(520, 120, QImage.Format.Format_RGB32)
         img.fill(QColor("white"))

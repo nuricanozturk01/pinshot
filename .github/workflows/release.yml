@@ -69,7 +69,7 @@ jobs:
           # headless OpenCV: same API, ~100 MB smaller bundle, no GTK dependency
           if python -c "import cv2" 2>/dev/null; then
             pip uninstall -y opencv-python
-            pip install opencv-python-headless
+            pip install --force-reinstall --no-deps opencv-python-headless
           fi
 
       - name: Generate icons
