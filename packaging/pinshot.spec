@@ -18,6 +18,12 @@ for pkg in ("rapidocr_onnxruntime", "onnxruntime", "imageio_ffmpeg", "soundcard"
     except Exception as ex:                               # engine not installable on this platform
         print(f"WARNING: {pkg} not bundled: {ex}")
 
+if sys.platform == "darwin":                  # system sound on macOS: a small Swift program built on ScreenCaptureKit
+    helper = os.path.join(ROOT, "packaging", "bin", "pinshot-audiotap")
+    if not os.path.isfile(helper):
+        raise SystemExit("pinshot-audiotap is missing: run packaging/macos/build_audiotap.sh before PyInstaller")
+    datas += [(helper, ".")]
+
 hiddenimports += ["_cffi_backend", "AVFoundation", "pynput.keyboard._xorg", "pynput.mouse._xorg", "pynput.keyboard._win32",
                   "pynput.mouse._win32", "pynput.keyboard._darwin", "pynput.mouse._darwin"]
 excludes = ["tkinter", "matplotlib", "scipy", "pandas", "PyQt5", "PyQt6", "PySide2"]

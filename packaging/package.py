@@ -49,7 +49,7 @@ def macos(arch: str) -> None:
     # Sign the bundled ffmpeg first: an unsigned executable is killed on Apple Silicon.
     for dp, _, fns in os.walk(app):
         for fn in fns:
-            if fn.startswith("ffmpeg-"):
+            if fn.startswith("ffmpeg-") or fn == "pinshot-audiotap":
                 path = os.path.join(dp, fn)
                 if not os.path.islink(path):
                     os.chmod(path, 0o755)

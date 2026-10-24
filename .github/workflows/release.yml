@@ -73,6 +73,10 @@ jobs:
             pip install --force-reinstall --no-deps opencv-python-headless
           fi
 
+      - name: Build macOS system-sound helper (Swift, ScreenCaptureKit)
+        if: runner.os == 'macOS'
+        run: tools/ci_run.sh "swiftc audiotap" bash packaging/macos/build_audiotap.sh
+
       - name: Generate icons
         env:
           QT_QPA_PLATFORM: offscreen
@@ -81,10 +85,10 @@ jobs:
       - name: Build application (PyInstaller)
         run: pyinstaller --noconfirm --clean packaging/pinshot.spec
 
-      - name: Sign bundled ffmpeg (macOS, required on Apple Silicon)
+      - name: Sign bundled ffmpeg and audio helper (macOS, required on Apple Silicon)
         if: runner.os == 'macOS'
         run: |
-          find dist/PinShot.app -type f -name 'ffmpeg-*' ! -type l -exec chmod 755 {} \; -exec codesign --force --sign - {} \;
+          find dist/PinShot.app -type f \( -name 'ffmpeg-*' -o -name 'pinshot-audiotap' \) ! -type l -exec chmod 755 {} \; -exec codesign --force --sign - {} \;
 
       - name: Self-test built app (Linux / macOS)
         if: runner.os != 'Windows'
@@ -93,6 +97,7 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then BIN="dist/PinShot.app/Contents/MacOS/PinShot"; else BIN="dist/PinShot/PinShot"; fi
           "$BIN" --selftest "$PWD/selftest.txt" || true
           cat selftest.txt
+          grep -q "RESULT OK" selftest.txt || echo "::error title=self-test failed::$(grep -E 'FAIL|Error|assert' selftest.txt | head -8 | tr '\n' ' ')"
           grep -q "RESULT OK" selftest.txt
 
       - name: Self-test built app (Windows)

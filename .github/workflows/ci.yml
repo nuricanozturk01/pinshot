@@ -41,6 +41,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           tools/ci_run.sh "pip install" pip install -e ".[test]"
+      - name: Build macOS system-sound helper (Swift)
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        run: tools/ci_run.sh "swiftc audiotap" bash packaging/macos/build_audiotap.sh
       - name: Test
         timeout-minutes: 15
         # -v shows which test is running; a test stuck for 120 s dumps every thread's stack (faulthandler_timeout)

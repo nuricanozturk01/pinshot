@@ -63,7 +63,7 @@ Open **System Settings → Privacy & Security** and switch **PinShot** on in the
 
 | Permission | What it is needed for | If it is missing |
 |---|---|---|
-| **Screen Recording** | Screenshots and screen recording | Empty or desktop-only images |
+| **Screen Recording** | Screenshots, screen recording and **system sound** | Empty or desktop-only images; no system sound |
 | **Input Monitoring** | The global shortcuts | Shortcuts do nothing |
 | **Accessibility** | The global shortcuts | Shortcuts do nothing |
 | **Microphone** | Recording your voice | The recording has no microphone |
@@ -80,7 +80,7 @@ Good to know:
 - Because the app is not notarized by Apple, the first launch needs a right-click → *Open*.
 - If a permission is already switched on but still does not work (this can happen after you install an update), select
   PinShot in the list, remove it with `−`, add it again, and restart PinShot.
-- System sound is not available on macOS without a virtual device such as BlackHole.
+- System sound works on macOS 13 and newer with the Screen Recording permission. Older macOS needs the setup in *System sound on macOS* below.
 
 ## Start it
 
@@ -158,7 +158,24 @@ Good to know:
 - MP4 keeps full color detail (4:4:4) for sharp text. A few players (QuickTime, Safari, some TVs) cannot play it; turn the
   option off in the panel if you want to share widely.
 - GIF files get big quickly. 10–15 fps is usually enough.
-- macOS has no built-in system-sound capture. Install a virtual device such as BlackHole to use it.
+- On macOS, system sound works on macOS 13 and newer (see *System sound on macOS* below).
+
+### System sound on macOS
+
+**macOS 13 (Ventura) or newer:** nothing to install. Tick **System sound** in the record panel. It uses the same
+*Screen Recording* permission as screenshots (see the permissions guide above). Restart PinShot after you grant it.
+The microphone is recorded through macOS directly, so your Mac's built-in microphone works.
+
+**Older macOS:** macOS cannot give an app the sound it is playing, so a free virtual audio device, **BlackHole**, is needed:
+
+1. Install **BlackHole 2ch**: `brew install blackhole-2ch`, or download it from
+   [existential.audio/blackhole](https://existential.audio/blackhole/).
+2. Open **Audio MIDI Setup** (Applications → Utilities). Click `+` at the bottom left → **Create Multi-Output Device**.
+   Tick your speakers or headphones **and** *BlackHole 2ch*. Turn on *Drift Correction* for BlackHole.
+3. In **System Settings → Sound → Output**, choose that Multi-Output Device.
+4. In PinShot, open the record panel, tick **System sound** and press **↻**.
+
+The panel has a **System sound guide** button that opens the BlackHole page and Audio MIDI Setup for you.
 
 ## Command line
 

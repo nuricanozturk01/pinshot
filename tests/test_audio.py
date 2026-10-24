@@ -274,10 +274,11 @@ def test_macperm_unknown_when_not_macos():
 
 def test_denied_microphone_permission_is_explained_not_silently_ignored(fake, monkeypatch):
     import pinshot.audio as audio
+    import pinshot.mac_audio as ma
     import pinshot.macperm as mp
     monkeypatch.setattr(audio, "_platform", lambda: "darwin")
     monkeypatch.setattr(mp, "mic_status", lambda: "denied")
-    assert audio.probe.__wrapped__ if hasattr(audio.probe, "__wrapped__") else True
+    monkeypatch.setattr(ma, "list_mics", lambda exe: ["MacBook Pro Microphone"])
     monkeypatch.delenv("PINSHOT_NO_AUDIO", raising=False)
     res = audio.probe()
     assert res["mic"][0] is False and "Gizlilik" in res["mic"][1]

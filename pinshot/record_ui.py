@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QGuiApplication, QPainter, QPen, QRegion
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QToolButton,
                                QVBoxLayout, QWidget)
@@ -35,6 +35,26 @@ QToolButton:hover{background:#3e3e44}
 
 def _show(w: QWidget) -> None:
     w.show() if sys.platform == "darwin" else w.showFullScreen()
+
+
+class AutoSizeFrame(QFrame):
+    """QFrame that resizes itself when its content changes (widgets shown/hidden, a long note appearing).
+
+    A plain QFrame without a parent layout is sized once; the option panels change height whenever the format or the
+    available audio sources change, so they were cut off (worst on macOS, where the permission notes are long)."""
+    resized = Signal()
+
+    def event(self, e) -> bool:
+        if e.type() == QEvent.Type.LayoutRequest:
+            QTimer.singleShot(0, self._fit)
+        return super().event(e)
+
+    def _fit(self) -> None:
+        try:
+            self.adjustSize()
+            self.resized.emit()
+        except RuntimeError:                       # deleted meanwhile
+            pass
 
 
 def hide_while_settings_open(owner, proc, on_back) -> None:
@@ -140,8 +160,11 @@ class RecordOptions(QWidget):
         self.audio_note.setStyleSheet("color:#ffb340;font-size:12px")
         self.settings_btn = QPushButton("Ses ayarlarını aç")
         self.settings_btn.clicked.connect(self._open_sound_settings)
+        self.setup_btn = QPushButton("Sistem sesi kurulum rehberi (BlackHole)")
+        self.setup_btn.clicked.connect(self._open_system_sound_guide)
         lay.addWidget(self.audio_note)
         lay.addWidget(self.settings_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.addWidget(self.setup_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self.sys_cb.setChecked(bool(cfg["record_audio_system"]))
         self.mic_cb.setChecked(bool(cfg["record_audio_mic"]))
         for w in self.findChildren(QWidget):
@@ -186,6 +209,10 @@ class RecordOptions(QWidget):
                 macperm.request_mic(lambda granted: self._perm_answered.emit())
         self._sync_audio()
 
+    def _open_system_sound_guide(self) -> None:
+        from . import audio
+        audio.open_system_sound_guide()
+
     def _open_sound_settings(self) -> None:
         from . import audio
         res = audio.open_sound_settings()
@@ -229,6 +256,7 @@ class RecordOptions(QWidget):
         self.audio_note.setText("\n".join(notes))
         self.audio_note.setVisible(bool(notes))
         self.settings_btn.setVisible(bool(notes) and not mic_ok)
+        self.setup_btn.setVisible(mp4 and not sys_ok and sys.platform == "darwin")
         self.refresh_btn.setVisible(mp4)
         self.mic_dev.setVisible(mp4)
 
@@ -242,7 +270,7 @@ class RecordOptions(QWidget):
                 "mic_device": str(self.mic_dev.currentData() or "")}
 
 
-class RecordPopup(QFrame):
+class RecordPopup(AutoSizeFrame):
     """Options + Record button shown under the capture toolbar (the red record button)."""
     chosen = Signal(dict)
     settings_launched = Signal(object)
@@ -273,6 +301,17 @@ class RecordPopup(QFrame):
             row.addWidget(b)
         lay.addLayout(row)
         self.adjustSize()
+        self.resized.connect(self.keep_inside)
+
+    def keep_inside(self) -> None:
+        """After a resize, keep the whole panel visible inside the overlay it lives in."""
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        self.setMaximumWidth(max(300, parent.width() - 24))
+        x = min(max(8, self.x()), max(8, parent.width() - self.width() - 8))
+        y = min(max(8, self.y()), max(8, parent.height() - self.height() - 8))
+        self.move(x, y)
 
     def _go(self) -> None:
         v = self.opts.values()
@@ -307,7 +346,7 @@ class RecordSelector(QWidget):
         self._handle = ""
         self.cursor_target = None     # set by start_overlays (monitor under the cursor)
 
-        p = QFrame(self)
+        p = AutoSizeFrame(self)
         p.setObjectName("panel")
         p.setStyleSheet(CSS)
         p.setCursor(Qt.CursorShape.ArrowCursor)
@@ -336,8 +375,10 @@ class RecordSelector(QWidget):
         self.opts = RecordOptions(cfg)
         self.opts.settings_launched.connect(self._settings_launched)
         outer.addWidget(self.opts)
+        p.setMaximumWidth(max(320, cap.geometry.width() - 40))
         p.adjustSize()
         p.move((cap.geometry.width() - p.width()) // 2, 28)
+        p.resized.connect(lambda: p.move(max(8, (self.width() - p.width()) // 2), 28))   # stay centred as it changes
         self.panel = p
 
     # ---- painting

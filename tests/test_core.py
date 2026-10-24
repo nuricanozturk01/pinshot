@@ -504,3 +504,30 @@ def test_ocr_error_is_shown_to_the_user(qapp, monkeypatch):
     assert win.status.text() == "OCR başarısız"
     assert "model could not be loaded" in win.edit.toPlainText()
     win.close()
+
+
+def test_record_popup_follows_its_content(overlay, monkeypatch):
+    """The options panel must grow and shrink with its content (it was sized once and then cut off)."""
+    import pinshot.audio as audio
+    from pinshot.record_ui import RecordPopup
+    monkeypatch.setattr(audio, "probe", lambda: {"system": (True, ""), "mic": (False, "Mikrofon bulunamadı. " + "uzun açıklama " * 12)})
+    monkeypatch.setattr(audio, "list_microphones", lambda: [])
+    o = overlay
+    o.resize(900, 700)
+    pop = RecordPopup(o, o.cfg)
+    pop.move(40, 40)
+    pop.show()
+    for _ in range(5):
+        QTest.qWait(10)
+    h_mp4 = pop.height()
+    assert pop.opts.audio_note.isVisible() and h_mp4 >= pop.opts.audio_note.height() + 100
+    pop.opts.fmt.setCurrentText("GIF")
+    for _ in range(5):
+        QTest.qWait(10)
+    assert pop.height() < h_mp4, "panel must shrink when the audio options are hidden"
+    pop.opts.fmt.setCurrentText("MP4")
+    for _ in range(5):
+        QTest.qWait(10)
+    assert pop.height() == h_mp4, "and grow back"
+    assert pop.geometry().bottom() <= o.height() and pop.geometry().right() <= o.width(), "must stay inside the overlay"
+    pop.close()

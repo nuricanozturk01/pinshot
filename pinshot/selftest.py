@@ -231,6 +231,24 @@ def run(outfile: str | None) -> int:
         assert "Audio: aac" in info and "Video: h264" in info, info[-300:]
         return "mux"
 
+    def macos_audio() -> str:
+        if sys.platform != "darwin":
+            return "skipped (not macOS)"
+        import subprocess
+        from . import mac_audio, macperm
+        from .recorder import find_ffmpeg
+        exe = find_ffmpeg()
+        assert exe, "ffmpeg is missing"
+        devices = subprocess.run([exe, "-hide_banner", "-devices"], capture_output=True, text=True).stdout
+        assert "avfoundation" in devices, "the bundled ffmpeg has no avfoundation input (microphone)"
+        helper = mac_audio.find_helper()
+        assert helper, "pinshot-audiotap (system sound) is not bundled"
+        out = subprocess.run([helper, "--check"], capture_output=True, text=True, timeout=30)
+        assert out.stdout.strip() == "OK", f"pinshot-audiotap --check failed: {out.stdout!r} {out.stderr!r}"
+        status = macperm.mic_status()
+        assert status != "unknown", "AVFoundation (PyObjC) is not bundled: microphone permission cannot be asked"
+        return f"avfoundation + audiotap + permission API (mic status: {status})"
+
     def hotkeys() -> str:
         try:
             import pynput  # noqa: F401
@@ -242,7 +260,8 @@ def run(outfile: str | None) -> int:
 
     lines.append(f"PinShot {__version__} on {sys.platform} {sys.version.split()[0]}")
     for name, fn in (("render", render), ("icons", icons), ("overlay", overlay), ("ocr", ocr),
-                     ("video", video), ("audio", audio), ("hotkeys", hotkeys)):
+                     ("video", video), ("audio", audio), ("macos_audio", macos_audio),
+                     ("hotkeys", hotkeys)):
         check(name, fn)
     text = "\n".join(lines) + f"\nRESULT {'OK' if ok else 'FAILED'}\n"
     if outfile:

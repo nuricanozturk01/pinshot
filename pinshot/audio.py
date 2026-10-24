@@ -81,7 +81,40 @@ def probe() -> dict:
     return _with_timeout(_probe_now, SCAN_TIMEOUT, {"system": (False, why), "mic": (False, why)})
 
 
+def _probe_mac() -> dict:
+    from . import mac_audio as ma
+    from . import macperm
+    from .recorder import find_ffmpeg
+    exe = find_ffmpeg()
+    if exe is None:
+        why = "ffmpeg bulunamadı: ses kaydı kullanılamıyor."
+        return {"system": (False, why), "mic": (False, why)}
+    res = {"system": (False, ""), "mic": (False, "")}
+    mics = ma.list_mics(exe)
+    if not mics:
+        res["mic"] = (False, _mic_hint())
+    elif macperm.mic_status() in ("denied", "restricted"):
+        res["mic"] = (False, macperm.DENIED_TEXT)
+    else:
+        res["mic"] = (True, "")
+    if ma.find_helper() and ma.macos_version() >= (13, 0):
+        from .capture import mac_screen_access
+        if mac_screen_access(request=False):
+            res["system"] = (True, "")
+        else:
+            res["system"] = (False, "Sistem sesi için Ekran Kaydı izni gerekir: Sistem Ayarları → Gizlilik ve Güvenlik → "
+                                    "Ekran Kaydı'nda PinShot'u açıp yeniden başlatın.")
+    elif ma.virtual_devices(exe):
+        res["system"] = (True, "")
+    else:
+        res["system"] = (False, "Sistem sesi için macOS 13 veya üstü gerekir; daha eski sürümlerde BlackHole gibi sanal bir "
+                                "ses cihazı kurup Ses MIDI Ayarı'nda Çoklu Çıkış Aygıtı oluşturun.")
+    return res
+
+
 def _probe_now() -> dict:
+    if _platform() == "darwin":
+        return _probe_mac()
     res = {"system": (False, ""), "mic": (False, "")}
     try:
         import soundcard as sc  # type: ignore
@@ -101,12 +134,30 @@ def _probe_now() -> dict:
         if _loopback_source(sc) is not None:
             res["system"] = (True, "")
         elif _platform() == "darwin":
-            res["system"] = (False, "macOS sistem sesi için sanal bir ses cihazı gerekir (ör. BlackHole).")
+            res["system"] = (False, "macOS sistem sesini doğrudan vermez: BlackHole gibi sanal bir ses cihazı kurup "
+                                    "Ses MIDI Ayarı'nda Çoklu Çıkış Aygıtı oluşturun (rehber için düğmeye basın), "
+                                    "sonra Yenile'ye basın.")
         else:
             res["system"] = (False, "Sistem sesi kaynağı bulunamadı.")
     except Exception as ex:  # noqa: BLE001
         res["system"] = (False, f"Sistem sesi açılamadı ({type(ex).__name__}).")
     return res
+
+
+GUIDE_URL = "https://github.com/ExistentialAudio/BlackHole#installation-instructions"
+
+
+def open_system_sound_guide() -> bool:
+    """macOS: open the BlackHole install guide and Audio MIDI Setup (where the Multi-Output Device is created)."""
+    import subprocess
+    ok = False
+    try:
+        subprocess.Popen(["open", GUIDE_URL])
+        ok = True
+        subprocess.Popen(["open", "-a", "Audio MIDI Setup"])
+    except OSError:
+        pass
+    return ok
 
 
 def open_privacy_settings() -> bool:
@@ -173,6 +224,11 @@ def list_microphones() -> list[str]:
         return []
 
     def scan() -> list[str]:
+        if _platform() == "darwin":
+            from . import mac_audio as ma
+            from .recorder import find_ffmpeg
+            exe = find_ffmpeg()
+            return ma.list_mics(exe) if exe else []
         import soundcard as sc  # type: ignore
         return [m.name for m in sc.all_microphones(include_loopback=True) if not getattr(m, "isloopback", False)]
     return _with_timeout(scan, SCAN_TIMEOUT, [])
@@ -217,7 +273,7 @@ class AudioRecorder:
             ready = threading.Event()
             th = threading.Thread(target=self._run, args=(kind, track, ready), name=f"pinshot-audio-{kind}", daemon=True)
             th.start()
-            if not ready.wait(3.0) and not track.error:
+            if not ready.wait(20.0 if _platform() == "darwin" else 3.0) and not track.error:
                 track.error = "cihaz zamanında açılamadı"
             if track.error:
                 self.warnings.append(f"{track.label} kaydedilemedi: {track.error}")
@@ -227,6 +283,53 @@ class AudioRecorder:
         return self.warnings
 
     def _run(self, kind: str, track: Track, ready: threading.Event) -> None:
+        if _platform() == "darwin":
+            self._run_mac(kind, track, ready)
+            return
+        self._run_soundcard(kind, track, ready)
+
+    def _run_mac(self, kind: str, track: Track, ready: threading.Event) -> None:
+        """macOS: the microphone through ffmpeg/avfoundation, system sound through ScreenCaptureKit (see mac_audio)."""
+        cap = None
+        try:
+            from . import mac_audio as ma
+            from .recorder import find_ffmpeg
+            if kind == "mic":
+                from . import macperm
+                status = macperm.mic_status()
+                if status in ("denied", "restricted"):
+                    raise RuntimeError(macperm.DENIED_TEXT)
+                if status == "not_determined":                   # show the system prompt, but do not record silence meanwhile
+                    macperm.request_mic()
+                    raise RuntimeError("Mikrofon izni bekleniyor. İzin verdikten sonra yeniden kaydedin.")
+            exe = find_ffmpeg()
+            if exe is None:
+                raise RuntimeError("ffmpeg bulunamadı")
+            cap = ma.start_mic(exe, self.mic_name, track.path) if kind == "mic" else ma.start_system(exe, track.path)
+            track.channels = 2
+            track.started = cap.started_at or time.monotonic()
+            ready.set()
+            while not self._stop.is_set():
+                if not cap.alive():                              # it died on its own: say why
+                    track.error = cap.explain(cap.proc.poll())
+                    break
+                self._stop.wait(0.1)
+        except Exception as ex:  # noqa: BLE001
+            track.error = str(ex) or type(ex).__name__
+            log.warning("audio source %s failed: %s", kind, track.error)
+        finally:
+            if cap is not None:
+                cap.stop()
+            try:
+                track.nbytes = os.path.getsize(track.path)
+            except OSError:
+                track.nbytes = 0
+            if track.nbytes and not track.error:
+                from . import mac_audio as ma
+                track.peak = ma.file_peak(track.path)
+            ready.set()
+
+    def _run_soundcard(self, kind: str, track: Track, ready: threading.Event) -> None:
         """Record one source into its PCM file. Reopens the device if it disappears or (system sound) the default
         output changes, e.g. when a Bluetooth headset switches profile in the middle of a recording."""
         failures = 0
