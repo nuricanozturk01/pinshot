@@ -101,17 +101,25 @@ class ChildCapture:
         self._watcher.start()
 
     def _watch(self) -> None:
-        """Ready = the helper printed its ready line, or (ffmpeg) the output file started to grow."""
+        """Ready = the helper printed its ready line, or (ffmpeg) the output file started to grow.
+
+        The pipe is read with os.read on the raw descriptor: iterating the buffered file object from a worker thread
+        crashed CPython on macOS (segmentation fault) while another thread was waiting on the process."""
         try:
             if self.ready_line is not None:
-                for raw in self.proc.stdout:                       # blocks until a line or the process ends
-                    if raw.decode("utf-8", "replace").strip() == self.ready_line:
-                        break
-                else:
-                    return
-                self.started_at = time.monotonic()
-                self._ready.set()
-                return
+                fd = self.proc.stdout.fileno()
+                pending = b""
+                while True:
+                    chunk = os.read(fd, 4096)                    # blocks; returns b"" when the process has ended
+                    if not chunk:
+                        return
+                    pending += chunk
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        if line.decode("utf-8", "replace").strip() == self.ready_line:
+                            self.started_at = time.monotonic()
+                            self._ready.set()
+                            return
             end = time.monotonic() + START_TIMEOUT
             while time.monotonic() < end and self.proc.poll() is None:
                 if os.path.exists(self.path) and os.path.getsize(self.path) > 0:
