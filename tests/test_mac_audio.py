@@ -32,6 +32,11 @@ def wait_until(cond, timeout=15.0):
     return False
 
 
+# The fake capture programs are executable scripts with a "#!" line, which Windows cannot run. The macOS capture code
+# is never used on Windows anyway.
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="macOS capture programs are not used on Windows")
+
+
 def fake_program(tmp_path, body: str, name="fake") -> str:
     """An executable Python script standing in for ffmpeg / pinshot-audiotap."""
     path = tmp_path / name

@@ -196,6 +196,7 @@ def test_device_scan_never_blocks_the_caller(monkeypatch):
     """A hanging audio backend (CoreAudio on a CI Mac, stuck PulseAudio) must not freeze the UI or the tests."""
     import pinshot.audio as audio
     monkeypatch.delenv("PINSHOT_NO_AUDIO", raising=False)
+    monkeypatch.setattr(audio, "_platform", lambda: "linux")        # this is about the soundcard path
     monkeypatch.setattr(audio, "SCAN_TIMEOUT", 0.5)
 
     class Hang(types.ModuleType):
