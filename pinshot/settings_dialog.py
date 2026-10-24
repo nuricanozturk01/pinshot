@@ -50,14 +50,22 @@ class SettingsDialog(QDialog):
         self.rec_fmt = QComboBox()
         self.rec_fmt.addItems(["mp4", "gif"])
         self.rec_fps = QComboBox()
-        for v in (10, 15, 24, 30):
+        for v in (10, 15, 24, 30, 60):
             self.rec_fps.addItem(f"{v} fps", v)
+        self.gif_width = QComboBox()
+        for v in (640, 960, 1280, 1920):
+            self.gif_width.addItem(f"{v} px", v)
+        self.vid_width = QComboBox()
+        for v, label in ((1280, "1280 px"), (1920, "1920 px (Full HD)"), (2560, "2560 px"), (0, "Orijinal")):
+            self.vid_width.addItem(label, v)
         self.rec_max = QSpinBox()
         self.rec_max.setRange(1, 180)
         self.rec_max.setSuffix(" dk")
         self.rec_cursor = QCheckBox("Fare imlecini göster")
         rf.addRow("Varsayılan biçim", self.rec_fmt)
-        rf.addRow("Kare hızı", self.rec_fps)
+        rf.addRow("Kare hızı (GIF en fazla 50)", self.rec_fps)
+        rf.addRow("GIF en fazla genişlik", self.gif_width)
+        rf.addRow("Video en fazla genişlik", self.vid_width)
         rf.addRow("En uzun kayıt", self.rec_max)
         rf.addRow(self.rec_cursor)
         root.addWidget(rec)
@@ -103,6 +111,9 @@ class SettingsDialog(QDialog):
         self.rec_fmt.setCurrentText(d["record_format"])
         i = self.rec_fps.findData(int(d["record_fps"]))
         self.rec_fps.setCurrentIndex(i if i >= 0 else 1)
+        for combo, key, fallback in ((self.gif_width, "record_gif_width", 2), (self.vid_width, "record_video_width", 1)):
+            i = combo.findData(int(d[key]))
+            combo.setCurrentIndex(i if i >= 0 else fallback)
         self.rec_max.setValue(max(1, int(d["record_max_seconds"]) // 60))
         self.rec_cursor.setChecked(bool(d["record_cursor"]))
         for k, e in self.keys.items():
@@ -123,6 +134,8 @@ class SettingsDialog(QDialog):
         c["auto_save"] = self.auto.isChecked()
         c["record_format"] = self.rec_fmt.currentText()
         c["record_fps"] = self.rec_fps.currentData()
+        c["record_gif_width"] = self.gif_width.currentData()
+        c["record_video_width"] = self.vid_width.currentData()
         c["record_max_seconds"] = self.rec_max.value() * 60
         c["record_cursor"] = self.rec_cursor.isChecked()
         seen: set[str] = set()

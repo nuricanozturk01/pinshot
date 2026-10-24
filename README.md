@@ -10,7 +10,8 @@ capture, annotate, paste. Or pin the image and keep it in front of you while you
 ## What it does
 
 **Capture and annotate**
-- Select a region, then move it or resize it by its handles.
+- Select a region, then move it or resize it by its handles. With several monitors the region can start on one
+  monitor and continue onto the next; the result is stitched together pixel for pixel.
 - Tools: rectangle, ellipse, line, arrow, pen, highlighter, text, numbered markers, mosaic and blur.
 - Everything you draw stays an object. You can select it, move it, resize it by its corners and change its colour or
   width later. Double-click a text to edit it.
@@ -28,8 +29,15 @@ capture, annotate, paste. Or pin the image and keep it in front of you while you
 **Screen recording**
 - Record a region or a whole monitor as **MP4** or **GIF**. With several monitors, each one has its own picker, so you
   choose the screen by clicking on it.
+- Frame rates: 10, 15, 24, 30 and 60 fps for MP4. GIF goes up to 50 fps (the format cannot go faster), but GIF files grow
+  quickly with the frame rate, so 10–15 fps is usually the best choice there.
+- Sound for MP4: record the **system sound**, the **microphone**, or both. Pick the microphone from a list; the options
+  are in the record panel (both `Ctrl+Alt+V` and the red record button in the capture toolbar). macOS needs a virtual device
+  such as BlackHole for system sound.
+- Quality first: full resolution by default, 4:4:4 colour for sharp coloured text (switch it off for maximum player
+  compatibility; QuickTime, Safari and some TVs cannot play 4:4:4), and a separate colour palette for every GIF frame.
 - Light on resources: frames are streamed to a separate low-priority encoder, so memory stays flat however long you record.
-  Large screens are scaled down while recording (1920 px wide for MP4, 960 px for GIF).
+  You can limit the output width to save CPU and disk space, but the default is the original size.
 - A red frame around the area (outside the video) and a small stop bar show that you are recording. A recording stops
   by itself after the time limit you set (10 minutes by default).
 - The finished file is copied to the clipboard, so you can paste it into a chat or an e-mail.
@@ -103,6 +111,8 @@ resize a pin), and `Alt` means `Option`.
 
 **Recording a video**
 
+You can also select an area in the normal capture screen and click the red record button in the toolbar.
+
 1. Press the recording shortcut (or choose *Record screen* in the tray menu). Every monitor shows a picker.
 2. On the monitor you want, choose **MP4** or **GIF** and the frame rate. Then drag an area and press *Record selection*, or
    press *Record whole screen* (or `Enter`).
@@ -119,7 +129,8 @@ The file is saved in your capture folder and copied to the clipboard. Click the 
 | `Ctrl+S` | Save to a file |
 | `F3` | Pin to the screen |
 | `O` | Recognize text (OCR) |
-| `Ctrl+A` | Select the whole screen |
+| Red record button | Record the selected area as MP4 or GIF instead of taking a still |
+| `Ctrl+A` | Select the whole monitor under the mouse cursor |
 | Arrow keys | Move the region or the selected object by 1 px (`Shift` for 10 px) |
 | `V R E L A P H T N M B` | Select, rectangle, ellipse, line, arrow, pen, highlighter, text, number, mosaic, blur |
 | `Shift` while drawing | Square or circle, and lines in 15° steps |
@@ -185,6 +196,10 @@ shortcuts use [pynput](https://github.com/moses-palmer/pynput).
 Video recording runs [FFmpeg](https://ffmpeg.org/) as a separate program, taken from the
 [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) package. That build is licensed under the GPL; PinShot does not
 link to it. OCR models come from RapidOCR (Apache-2.0).
+
+## Author
+
+Created by **Nuri Can OZTURK** · [github.com/nuricanozturk01](https://github.com/nuricanozturk01)
 
 ## License
 

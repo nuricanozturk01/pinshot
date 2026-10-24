@@ -22,9 +22,17 @@ DEFAULTS: dict[str, Any] = {
     "hotkey_pin": "<f3>",
     "hotkey_record": "<ctrl>+<alt>+v",
     "record_format": "mp4",                  # mp4 | gif
-    "record_fps": 15,
+    "record_fps": 30,                        # MP4 frame rate
+    "record_fps_gif": 15,                    # GIF frame rate (files grow quickly with fps)
+    "record_quality_444": True,              # full-resolution colour (sharp coloured text); some players cannot open it
+    "record_audio_system": False,            # MP4 only
+    "record_audio_mic": False,
+    "record_mic_device": "",                 # "" = system default microphone
     "record_max_seconds": 600,               # hard stop: protects disk and CPU from a forgotten recording
     "record_cursor": True,
+    "record_gif_width": 1920,                # max output width in px; frames are scaled down while recording
+    "record_video_width": 0,                 # 0 = original size
+    "island_pos": None,                      # where the user last dragged the recording island
     "color": "#ff3b30",
     "pen_width": 3,
     "font_px": 28,

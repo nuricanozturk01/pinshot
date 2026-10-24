@@ -162,8 +162,9 @@ def _arrow_head(p: QPainter, a: QPointF, b: QPointF, width: int, color: QColor) 
     p.drawPolygon(QPolygonF([b, left, right]))
 
 
-def _obscure(base: QImage, r: QRectF, scale: float, kind: str, strength: int) -> QImage:
-    phys = QRectF(r.x() * scale, r.y() * scale, r.width() * scale, r.height() * scale).toAlignedRect()
+def _obscure(base: QImage, r: QRectF, scale: float, kind: str, strength: int, origin: QPointF | None = None) -> QImage:
+    ox, oy = (origin.x(), origin.y()) if origin is not None else (0.0, 0.0)   # logical position of base's top-left
+    phys = QRectF((r.x() - ox) * scale, (r.y() - oy) * scale, r.width() * scale, r.height() * scale).toAlignedRect()
     crop = base.copy(phys)
     if crop.isNull() or crop.width() < 1 or crop.height() < 1:
         return crop
@@ -182,7 +183,8 @@ def _obscure(base: QImage, r: QRectF, scale: float, kind: str, strength: int) ->
     return out
 
 
-def paint_item(p: QPainter, it: Item, base: QImage, scale: float, number: int = 0) -> None:
+def paint_item(p: QPainter, it: Item, base: QImage, scale: float, number: int = 0,
+               origin: QPointF | None = None) -> None:
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     pen = QPen(it.color, it.width, Qt.PenStyle.DashLine if it.dashed else Qt.PenStyle.SolidLine,
@@ -230,19 +232,20 @@ def paint_item(p: QPainter, it: Item, base: QImage, scale: float, number: int = 
     elif it.kind in ("mosaic", "blur"):
         r = it.rect()
         if r.width() >= 1 and r.height() >= 1:
-            img = _obscure(base, r, scale, it.kind, it.width)
+            img = _obscure(base, r, scale, it.kind, it.width, origin)
             if not img.isNull():
                 p.drawImage(r, img)
     p.restore()
 
 
-def paint_items(p: QPainter, items: list[Item], base: QImage, scale: float, skip: Item | None = None) -> None:
+def paint_items(p: QPainter, items: list[Item], base: QImage, scale: float, skip: Item | None = None,
+                origin: QPointF | None = None) -> None:
     n = 0
     for it in items:
         if it.kind == "number":
             n += 1
         if it is not skip:
-            paint_item(p, it, base, scale, n)
+            paint_item(p, it, base, scale, n, origin)
 
 
 def number_of(items: list[Item], target: Item) -> int:

@@ -173,6 +173,38 @@ def run(outfile: str | None) -> int:
             res.append(fmt)
         return "+".join(res)
 
+    def audio() -> str:
+        import math
+        import struct
+        import time
+        import platform
+        from .audio import RATE, Track, probe
+        from .recorder import Encoder, find_ffmpeg
+        probe()                                             # must not raise, with or without devices
+        exe = find_ffmpeg()
+        if exe is None:
+            if sys.platform == "win32" and platform.machine().upper() == "ARM64":
+                return "skipped (no bundled ffmpeg)"
+            raise AssertionError("ffmpeg is missing from the build")
+        pcm = os.path.join(tempfile.gettempdir(), "pinshot-selftest.pcm")
+        with open(pcm, "wb") as f:
+            f.write(b"".join(struct.pack("<hh", *([int(9000 * math.sin(2 * math.pi * 440 * i / RATE))] * 2))
+                             for i in range(RATE)))
+        out = os.path.join(tempfile.gettempdir(), "pinshot-selftest-audio.mp4")
+        enc = Encoder(exe, (160, 90), 15, "mp4", out, 0, with_audio=True, hq444=True)
+        t0 = time.monotonic()
+        for i in range(15):
+            enc.push(bytes([(i * 15) % 256, 80, 190, 255]) * (160 * 90))
+            time.sleep(1 / 15)
+        ok, err = enc.finish([Track("t", pcm, 2, started=t0)], t0)
+        os.remove(pcm)
+        assert ok, f"audio mux failed: {err}"
+        import subprocess
+        info = subprocess.run([exe, "-hide_banner", "-i", out], capture_output=True, text=True).stderr
+        os.remove(out)
+        assert "Audio: aac" in info and "Video: h264" in info, info[-300:]
+        return "mux"
+
     def hotkeys() -> str:
         try:
             import pynput  # noqa: F401
@@ -184,7 +216,7 @@ def run(outfile: str | None) -> int:
 
     lines.append(f"PinShot {__version__} on {sys.platform} {sys.version.split()[0]}")
     for name, fn in (("render", render), ("icons", icons), ("overlay", overlay), ("ocr", ocr),
-                     ("video", video), ("hotkeys", hotkeys)):
+                     ("video", video), ("audio", audio), ("hotkeys", hotkeys)):
         check(name, fn)
     text = "\n".join(lines) + f"\nRESULT {'OK' if ok else 'FAILED'}\n"
     if outfile:

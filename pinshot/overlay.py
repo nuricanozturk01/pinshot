@@ -7,11 +7,11 @@ import sys
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetricsF, QGuiApplication, QImage, QPainter, QPen
-from PySide6.QtWidgets import QFileDialog, QPlainTextEdit, QWidget
+from PySide6.QtWidgets import QFileDialog, QMenu, QPlainTextEdit, QWidget
 
 from . import output
 from .annotate import History, Item, bounds, constrain, drag_handle, geom_state, handles, hit_test, paint_items
-from .capture import Capture
+from .capture import Capture, compose_region
 from .config import Config
 from .pin import PinWindow
 from .toolbar import PROPS, SHORTCUTS, Toolbar
@@ -47,21 +47,14 @@ def _show(w: QWidget) -> None:
     w.show() if sys.platform == "darwin" else w.showFullScreen()
 
 
-class Overlay(QWidget):
-    closed = Signal()
-    started = Signal()          # user began a selection on this screen
-    done = Signal(str)          # status text for a tray notification
+class Session:
+    """State shared by the per-monitor overlays, so one selection can span several monitors.
 
-    def __init__(self, cap: Capture, cfg: Config):
-        super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.cap, self.cfg = cap, cfg
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setMouseTracking(True)
-        self.setCursor(Qt.CursorShape.CrossCursor)
-        self.setScreen(cap.screen)
-        self.setGeometry(cap.geometry)
+    Everything here is in *global desktop coordinates* (the same space as QScreen.geometry())."""
 
+    def __init__(self, caps: list[Capture], cfg: Config):
+        self.caps, self.cfg = caps, cfg
+        self.overlays: list = []
         self.sel: QRectF | None = None
         self.items: list[Item] = []
         self.history = History(self.items)
@@ -72,10 +65,75 @@ class Overlay(QWidget):
         self.fill = False
         self.dashed = False
         self.font_px = int(cfg["font_px"])
+        self.mode = ""
+        self.cur: Item | None = None
+        self.edit_item: Item | None = None
 
-        self._mode = ""
+    @property
+    def bounds(self) -> QRectF:
+        r = QRectF()
+        for c in self.caps:
+            r = r.united(QRectF(c.geometry))
+        return r
+
+    def update_all(self) -> None:
+        for o in self.overlays:
+            try:
+                o.update()
+            except RuntimeError:           # already deleted
+                pass
+
+    def host(self):
+        """The overlay that shows the toolbar: the one holding the selection's bottom-right corner."""
+        if self.sel is None or not self.overlays:
+            return None
+        corner = QPoint(max(0, int(self.sel.right()) - 1), max(0, int(self.sel.bottom()) - 1))
+        for o in self.overlays:
+            if o.cap.geometry.contains(corner):
+                return o
+        best = max(self.overlays, key=lambda o: QRectF(o.cap.geometry).intersected(self.sel).width()
+                   * QRectF(o.cap.geometry).intersected(self.sel).height())
+        return best
+
+
+def _shared(name: str) -> property:
+    return property(lambda self: getattr(self.s, name), lambda self, v: setattr(self.s, name, v))
+
+
+class Overlay(QWidget):
+    closed = Signal()
+    started = Signal()          # user began a selection on this screen
+    done = Signal(str)          # status text for a tray notification
+    record = Signal(object)     # user chose "record this area": dict(screen, region, fmt, fps)
+
+    sel = _shared("sel")
+    items = _shared("items")
+    history = _shared("history")
+    tool = _shared("tool")
+    selected = _shared("selected")
+    color = _shared("color")
+    pen_w = _shared("pen_w")
+    fill = _shared("fill")
+    dashed = _shared("dashed")
+    font_px = _shared("font_px")
+    _mode = _shared("mode")
+    _cur = _shared("cur")
+    _edit_item = _shared("edit_item")
+
+    def __init__(self, cap: Capture, cfg: Config, session: Session | None = None):
+        super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.cap, self.cfg = cap, cfg
+        self.s = session or Session([cap], cfg)
+        self.s.overlays.append(self)
+        self.origin = cap.geometry.topLeft()
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setScreen(cap.screen)
+        self.setGeometry(cap.geometry)
+
         self._anchor = QPointF()
-        self._cur: Item | None = None
         self._mouse = QPointF()
         self._last = QPointF()
         self._grab_off = QPointF()
@@ -83,11 +141,12 @@ class Overlay(QWidget):
         self._spec: tuple = (None, None)
         self._before = None
         self._editor: InlineEditor | None = None
-        self._edit_item: Item | None = None
         self._edit_pos = QPointF()
         self._edit_before = None
         self._hex = True
         self._finished = False
+        self.cursor_target = None     # set by start_overlays: returns the overlay on the monitor under the cursor
+        self._popup = None
 
         self.bar = Toolbar(self)
         self.bar.setCursor(Qt.CursorShape.ArrowCursor)
@@ -100,8 +159,30 @@ class Overlay(QWidget):
         self.bar.font_changed.connect(self._on_font)
         self.bar.action.connect(self._on_action)
 
+    # ================================================================ coordinates / shared repaint
+    def _gp(self, e) -> QPointF:
+        """Mouse position in global desktop coordinates.
+
+        While a button is held the pointer can leave this monitor but events keep coming to this window, with
+        coordinates in *this window's* scale. On monitors with different scale factors those are wrong, so outside
+        the window the real cursor position (already in global logical coordinates) is used instead."""
+        local = e.position()
+        if QRectF(self.rect()).contains(local):
+            return local + QPointF(self.origin)
+        return QPointF(QCursor.pos())
+
+    def _repaint(self) -> None:
+        self.s.update_all()
+
     # ================================================================ toolbar sync
     def _sync_bar(self) -> None:
+        for o in list(self.s.overlays):
+            try:
+                o._sync_bar_local()
+            except RuntimeError:
+                pass
+
+    def _sync_bar_local(self) -> None:
         it = self.selected if self.tool == "select" else None
         kind = it.kind if it else (None if self.tool == "select" else self.tool)
         self.bar.configure(kind)
@@ -114,12 +195,16 @@ class Overlay(QWidget):
         self._place_bar()
 
     def _place_bar(self) -> None:
-        if not self.sel or self._mode in ("sel-new", "sel-move", "sel-resize"):
+        if not self.sel or self._mode in ("sel-new", "sel-move", "sel-resize") or self.s.host() is not self:
+            self.bar.hide()
+            return
+        vis = self.sel.translated(-QPointF(self.origin)).intersected(QRectF(self.rect()))   # part of the selection here
+        if vis.isEmpty():
             self.bar.hide()
             return
         self.bar.adjustSize()
         w, h = self.bar.width(), self.bar.height()
-        r = self.sel.toRect()
+        r = vis.toRect()
         x = max(8, min(r.right() - w + 1, self.width() - w - 8))
         y = r.bottom() + 10
         if y + h > self.height() - 8:
@@ -135,9 +220,10 @@ class Overlay(QWidget):
         self.tool = name
         if name != "select":
             self.selected = None
-        self.setCursor(Qt.CursorShape.ArrowCursor if name == "select" else Qt.CursorShape.CrossCursor)
+        for o in self.s.overlays:
+            o.setCursor(Qt.CursorShape.ArrowCursor if name == "select" else Qt.CursorShape.CrossCursor)
         self._sync_bar()
-        self.update()
+        self._repaint()
 
     def _target(self) -> Item | None:
         """Item that property changes apply to (select mode only). Property edits are not undoable."""
@@ -149,7 +235,7 @@ class Overlay(QWidget):
         if (t := self._target()) and "color" in PROPS.get(t.kind, ()):
             t.color = QColor(c)
         self._restyle_editor()
-        self.update()
+        self._repaint()
 
     def _on_width(self, v: int) -> None:
         if (t := self._target()) and "width" in PROPS.get(t.kind, ()):
@@ -157,21 +243,21 @@ class Overlay(QWidget):
         else:
             self.pen_w = v
             self.cfg["pen_width"] = v
-        self.update()
+        self._repaint()
 
     def _on_fill(self, v: bool) -> None:
         if t := self._target():
             t.fill = v
         else:
             self.fill = v
-        self.update()
+        self._repaint()
 
     def _on_dash(self, v: bool) -> None:
         if t := self._target():
             t.dashed = v
         else:
             self.dashed = v
-        self.update()
+        self._repaint()
 
     def _on_font(self, v: int) -> None:
         if (t := self._target()) and t.kind == "text":
@@ -180,38 +266,98 @@ class Overlay(QWidget):
             self.font_px = v
             self.cfg["font_px"] = v
         self._restyle_editor()
-        self.update()
+        self._repaint()
 
     def _on_action(self, name: str) -> None:
         {"undo": self.undo, "redo": self.redo, "delete": self.delete_selected, "pin": self.pin,
-         "ocr": self.ocr, "save": self.save, "copy": self.copy, "cancel": self.close}[name]()
+         "ocr": self.ocr, "save": self.save, "copy": self.copy, "cancel": self.close,
+         "record": self._record_menu}[name]()
+
+    def _record_menu(self) -> None:
+        """Red record button: open the options panel (format, fps, size, system sound, microphone)."""
+        if not self.sel:
+            return
+        self._commit_text()
+        self._close_popup()
+        from .record_ui import RecordPopup
+        pop = RecordPopup(self, self.cfg)
+        from .record_ui import hide_while_settings_open
+        pop.settings_launched.connect(lambda proc: hide_while_settings_open(self, proc, lambda: pop.opts.reload_audio()))
+        pop.chosen.connect(lambda v: self.request_record(v["fmt"], v["fps"], **{k: x for k, x in v.items()
+                                                                              if k not in ("fmt", "fps")}))
+        bar = self.bar.geometry()
+        x = max(8, min(bar.right() - pop.width() + 1, self.width() - pop.width() - 8))
+        y = bar.bottom() + 8
+        if y + pop.height() > self.height() - 8:
+            y = bar.top() - pop.height() - 8
+        pop.move(x, max(8, y))
+        pop.show()
+        pop.raise_()
+        self._popup = pop
+
+    def _close_popup(self) -> bool:
+        pop, self._popup = self._popup, None
+        if pop is not None:
+            try:
+                pop.close()
+                pop.deleteLater()
+            except RuntimeError:
+                pass
+            return True
+        return False
+
+    def request_record(self, fmt: str, fps: int | None = None, max_width: int | None = None,
+                       audio_system: bool | None = None, audio_mic: bool | None = None,
+                       mic_device: str | None = None, hq444: bool | None = None) -> None:
+        if not self.sel or self.sel.width() < 16 or self.sel.height() < 16:
+            self.done.emit("Kayıt için daha büyük bir alan seçin")
+            return
+        c = self.cfg
+        fps = int(fps if fps is not None else c["record_fps_gif" if fmt == "gif" else "record_fps"])
+        if fmt == "gif":
+            fps = min(fps, 50)                          # GIF cannot go faster (delays are 1/100 s)
+        v = {"fmt": fmt, "fps": fps,
+             "max_width": int(max_width if max_width is not None
+                              else c["record_gif_width" if fmt == "gif" else "record_video_width"]),
+             "audio_system": bool(c["record_audio_system"] if audio_system is None else audio_system) and fmt == "mp4",
+             "audio_mic": bool(c["record_audio_mic"] if audio_mic is None else audio_mic) and fmt == "mp4",
+             "mic_device": str(c["record_mic_device"] if mic_device is None else mic_device),
+             "hq444": bool(c["record_quality_444"] if hq444 is None else hq444) and fmt == "mp4"}
+        from .record_ui import persist_choice
+        persist_choice(c, v)
+        self._close_popup()
+        screen = QGuiApplication.screenAt(self.sel.center().toPoint()) or self.cap.screen
+        self.record.emit({"screen": screen, "region": self.sel.toRect(), **v})
+        self._finish()
 
     # ================================================================ painting
     def paintEvent(self, _) -> None:
         p = QPainter(self)
         p.drawImage(self.rect(), self.cap.image)
-        dim = QColor(0, 0, 0, 120)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 120))
+        origin = QPointF(self.origin)
         if not self.sel:
-            p.fillRect(self.rect(), dim)
             if self._mode == "":
                 self._draw_hint(p)
         else:
-            s = self.sel.toRect()
-            p.fillRect(QRect(0, 0, self.width(), max(0, s.top())), dim)
-            p.fillRect(QRect(0, s.bottom() + 1, self.width(), self.height()), dim)
-            p.fillRect(QRect(0, s.top(), max(0, s.left()), s.height()), dim)
-            p.fillRect(QRect(s.right() + 1, s.top(), self.width(), s.height()), dim)
+            vis = self.sel.translated(-origin).intersected(QRectF(self.rect()))
+            if not vis.isEmpty():
+                p.save()
+                p.setClipRect(vis)
+                p.drawImage(self.rect(), self.cap.image)            # undim the selected part of this monitor
+                p.translate(-origin)                                  # from here on: global desktop coordinates
+                paint_items(p, self.items + ([self._cur] if self._cur else []), self.cap.image, self.cap.scale,
+                            skip=self._edit_item, origin=origin)
+                p.restore()
             p.save()
-            p.setClipRect(s)
-            paint_items(p, self.items + ([self._cur] if self._cur else []), self.cap.image, self.cap.scale,
-                        skip=self._edit_item)
-            p.restore()
+            p.translate(-origin)
             self._draw_selected_item(p)
             p.setPen(QPen(ACCENT, 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRect(s.adjusted(0, 0, -1, -1))
+            p.drawRect(self.sel.adjusted(0, 0, -1, -1))
             self._draw_sel_handles(p)
-            self._draw_size_label(p, s)
+            p.restore()
+            self._draw_size_label(p)
         if self.sel is None or self._mode == "sel-new":
             self._draw_loupe(p)
 
@@ -234,11 +380,15 @@ class Overlay(QWidget):
         w = QFontMetricsF(f).horizontalAdvance(txt) + 16
         self._draw_pill(p, txt, int((self.width() - w) / 2), 24)
 
-    def _draw_size_label(self, p: QPainter, s: QRect) -> None:
-        sc = self.cap.scale
+    def _draw_size_label(self, p: QPainter) -> None:
+        tl = self.sel.topLeft() - QPointF(self.origin)
+        if not QRectF(self.rect()).contains(tl + QPointF(1, 1)):
+            return                                                    # drawn on the monitor holding the corner
+        sc = max(c.scale for c in self.s.caps if c.geometry.intersects(self.sel.toAlignedRect()) ) \
+            if any(c.geometry.intersects(self.sel.toAlignedRect()) for c in self.s.caps) else self.cap.scale
         txt = f"{round(self.sel.width() * sc)} × {round(self.sel.height() * sc)}"
-        y = s.top() - 28 if s.top() > 32 else s.top() + 6
-        self._draw_pill(p, txt, max(4, s.left()), y)
+        x, y = int(tl.x()), int(tl.y())
+        self._draw_pill(p, txt, max(4, x), y - 28 if y > 32 else y + 6)
 
     def _draw_sel_handles(self, p: QPainter) -> None:
         for r in self._sel_handles().values():
@@ -260,6 +410,20 @@ class Overlay(QWidget):
             p.drawEllipse(pos, 4.5, 4.5)
         p.restore()
 
+    def _cursor_local(self) -> QPointF | None:
+        """Real cursor position in this overlay's coordinates, or None when it is on another monitor."""
+        g = self.cap.geometry
+        pos = QCursor.pos()
+        if not g.contains(pos):
+            return None
+        return QPointF(pos.x() - g.x(), pos.y() - g.y())
+
+    def enterEvent(self, e) -> None:
+        self._repaint()
+
+    def leaveEvent(self, e) -> None:
+        self._repaint()          # the loupe must disappear when the cursor moves to another monitor
+
     def _pixel_at(self, pt: QPointF) -> QColor:
         x, y = int(pt.x() * self.cap.scale), int(pt.y() * self.cap.scale)
         img = self.cap.image
@@ -269,9 +433,12 @@ class Overlay(QWidget):
         return c.name().upper() if self._hex else f"rgb({c.red()}, {c.green()}, {c.blue()})"
 
     def _draw_loupe(self, p: QPainter) -> None:
+        mouse = self._cursor_local()
+        if mouse is None:
+            return
         n, z = 15, 8
         sc = self.cap.scale
-        cx, cy = int(self._mouse.x() * sc), int(self._mouse.y() * sc)
+        cx, cy = int(mouse.x() * sc), int(mouse.y() * sc)
         img = QImage(n, n, QImage.Format.Format_RGB32)
         img.fill(0)
         src = self.cap.image
@@ -281,11 +448,11 @@ class Overlay(QWidget):
                 if 0 <= x < src.width() and 0 <= y < src.height():
                     img.setPixel(i, j, src.pixel(x, y))
         size = n * z
-        pos = QPoint(int(self._mouse.x()) + 22, int(self._mouse.y()) + 22)
+        pos = QPoint(int(mouse.x()) + 22, int(mouse.y()) + 22)
         if pos.x() + size + 4 > self.width():
-            pos.setX(int(self._mouse.x()) - 22 - size)
+            pos.setX(int(mouse.x()) - 22 - size)
         if pos.y() + size + 56 > self.height():
-            pos.setY(int(self._mouse.y()) - 58 - size)
+            pos.setY(int(mouse.y()) - 58 - size)
         box = QRect(pos, QSize(size, size))
         p.drawImage(box, img)
         p.setPen(QPen(ACCENT, 2))
@@ -293,7 +460,7 @@ class Overlay(QWidget):
         p.drawRect(box)
         p.setPen(QPen(Qt.GlobalColor.white, 1))
         p.drawRect(QRect(pos.x() + (n // 2) * z, pos.y() + (n // 2) * z, z, z))
-        self._draw_pill(p, self._color_text(self._pixel_at(self._mouse)), pos.x(), pos.y() + size + 4)
+        self._draw_pill(p, self._color_text(self._pixel_at(mouse)), pos.x(), pos.y() + size + 4)
         self._draw_pill(p, f"{cx}, {cy}   C kopyala · Shift biçim", pos.x(), pos.y() + size + 28)
 
     # ================================================================ geometry helpers
@@ -325,11 +492,14 @@ class Overlay(QWidget):
         return None
 
     def _clamp_rect(self, r: QRectF) -> QRectF:
-        return r.intersected(QRectF(self.rect()))
+        return r.intersected(self.s.bounds)
 
     # ================================================================ mouse
     def mousePressEvent(self, e) -> None:
-        pt = e.position()
+        pt = self._gp(e)
+        if self._popup is not None:                       # a click outside the options panel just dismisses it
+            self._close_popup()
+            return
         if self._editor:
             self._commit_text()
             return
@@ -358,7 +528,7 @@ class Overlay(QWidget):
                 self.selected = it
                 self._mode, self._last, self._before = "item-move", pt, geom_state(it)
                 self._sync_bar()
-                self.update()
+                self._repaint()
                 return
             if self.sel.contains(pt):
                 self.selected = None
@@ -372,27 +542,29 @@ class Overlay(QWidget):
             return
         if self.tool == "number":
             self._add(self._new_item("number", [pt]))
-            self.update()
+            self._repaint()
             return
         pts = [pt] if self.tool in ("pen", "marker") else [pt, pt]
         self._mode, self._anchor = "draw", pt
         self._cur = self._new_item(self.tool, pts)
 
     def mouseMoveEvent(self, e) -> None:
-        pt = e.position()
-        self._mouse = pt
+        pt = self._gp(e)
+        self._mouse = pt - QPointF(self.origin)
         shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         m = self._mode
         if m == "sel-new":
             self.sel = self._clamp_rect(QRectF(self._anchor, pt).normalized())
         elif m == "sel-move":
+            b = self.s.bounds
             tl = pt - self._grab_off
-            tl.setX(min(max(0, tl.x()), self.width() - self.sel.width()))
-            tl.setY(min(max(0, tl.y()), self.height() - self.sel.height()))
+            tl.setX(min(max(b.left(), tl.x()), b.right() - self.sel.width()))
+            tl.setY(min(max(b.top(), tl.y()), b.bottom() - self.sel.height()))
             self.sel.moveTo(tl)
         elif m == "sel-resize":
             r, h = QRectF(self.sel), self._sel_handle
-            x, y = min(max(0, pt.x()), self.width()), min(max(0, pt.y()), self.height())
+            b = self.s.bounds
+            x, y = min(max(b.left(), pt.x()), b.right()), min(max(b.top(), pt.y()), b.bottom())
             if "l" in h:
                 r.setLeft(x)
             if "r" in h:
@@ -414,7 +586,7 @@ class Overlay(QWidget):
             drag_handle(self.selected, self._spec, pt, shift)
         else:
             self._update_cursor(pt)
-        self.update()
+        self._repaint()
 
     def mouseReleaseEvent(self, e) -> None:
         m, self._mode = self._mode, ""
@@ -429,10 +601,10 @@ class Overlay(QWidget):
         elif m in ("item-move", "item-handle") and self.selected and self._before:
             self.history.modified(self.selected, self._before)
         self._sync_bar()
-        self.update()
+        self._repaint()
 
     def mouseDoubleClickEvent(self, e) -> None:
-        pt = e.position()
+        pt = self._gp(e)
         it = self._item_at(pt)
         if it and it.kind == "text" and self.tool == "select":
             self._begin_text(it.pts[0], it)
@@ -449,10 +621,10 @@ class Overlay(QWidget):
             self.sel, self.selected = None, None
             self.items.clear()
             self.history = History(self.items)
-            self.bar.hide()
+            self._sync_bar()
         else:
             self.close()
-        self.update()
+        self._repaint()
 
     def _update_cursor(self, pt: QPointF) -> None:
         cur = Qt.CursorShape.CrossCursor
@@ -492,7 +664,7 @@ class Overlay(QWidget):
             self.history.deleted(it, idx)
             self.selected = None
             self._sync_bar()
-            self.update()
+            self._repaint()
 
     def undo(self) -> None:
         self._commit_text()
@@ -500,13 +672,13 @@ class Overlay(QWidget):
         if it is self.selected and it not in self.items:
             self.selected = None
         self._sync_bar()
-        self.update()
+        self._repaint()
 
     def redo(self) -> None:
         self._commit_text()
         self.history.redo()
         self._sync_bar()
-        self.update()
+        self._repaint()
 
     # ================================================================ inline text
     def _begin_text(self, pos: QPointF, item: Item | None = None) -> None:
@@ -530,7 +702,7 @@ class Overlay(QWidget):
         if item:
             ed.selectAll()
         self._fit_editor()
-        self.update()
+        self._repaint()
 
     def _editor_look(self) -> tuple[QColor, int]:
         it = self._edit_item
@@ -558,9 +730,17 @@ class Overlay(QWidget):
         lines = ed.toPlainText().split("\n")
         w = max([fm.horizontalAdvance(ln) for ln in lines] + [px * 3])
         h = max(fm.lineSpacing() * len(lines), px * 1.3)
-        ed.setGeometry(int(self._edit_pos.x()) - 1, int(self._edit_pos.y()) - 1, int(w) + 10, int(h) + 4)
+        ed.setGeometry(int(self._edit_pos.x() - self.origin.x()) - 1, int(self._edit_pos.y() - self.origin.y()) - 1,
+                       int(w) + 10, int(h) + 4)
 
     def _commit_text(self) -> None:
+        for o in list(self.s.overlays):          # the editor may live on another monitor's overlay
+            try:
+                o._commit_text_local()
+            except RuntimeError:
+                pass
+
+    def _commit_text_local(self) -> None:
         ed = self._editor
         if ed is None:
             return
@@ -585,7 +765,7 @@ class Overlay(QWidget):
             self.selected, self.tool = new, "select"
         self.setFocus()
         self._sync_bar()
-        self.update()
+        self._repaint()
 
     # ================================================================ keyboard
     def keyPressEvent(self, e) -> None:
@@ -593,27 +773,29 @@ class Overlay(QWidget):
         ctrl = bool(m & Qt.KeyboardModifier.ControlModifier)
         shift = bool(m & Qt.KeyboardModifier.ShiftModifier)
         arrows = (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down)
+        if k == Qt.Key.Key_Escape and self._close_popup():
+            return
         if k == Qt.Key.Key_Escape:
             if self.tool != "select":
                 self.set_tool("select")
             elif self.selected:
                 self.selected = None
                 self._sync_bar()
-                self.update()
+                self._repaint()
             else:
                 self.close()
         elif k == Qt.Key.Key_Shift and not self.sel:
             self._hex = not self._hex
-            self.update()
+            self._repaint()
         elif k == Qt.Key.Key_A and ctrl:
-            self.sel = QRectF(self.rect())
-            self.started.emit()
-            self._sync_bar()
-            self.update()
+            target = (self.cursor_target() if self.cursor_target else None) or self
+            target.select_all()          # the monitor under the mouse, not whichever has keyboard focus
         elif not self.sel:
             if k == Qt.Key.Key_C and not ctrl:
-                QGuiApplication.clipboard().setText(self._color_text(self._pixel_at(self._mouse)))
-                self._finish(f"Renk kopyalandı: {self._color_text(self._pixel_at(self._mouse))}")
+                target = (self.cursor_target() if self.cursor_target else None) or self
+                text = target._color_text(target._pixel_at(target._cursor_local() or target._mouse))
+                QGuiApplication.clipboard().setText(text)
+                self._finish(f"Renk kopyalandı: {text}")
         elif k in (Qt.Key.Key_Return, Qt.Key.Key_Enter) or (ctrl and k == Qt.Key.Key_C):
             self.copy()
         elif ctrl and k == Qt.Key.Key_Z and not shift:
@@ -638,7 +820,7 @@ class Overlay(QWidget):
                 self.sel.translate(dx, dy)
                 self.sel = self._clamp_rect(self.sel)
                 self._place_bar()
-            self.update()
+            self._repaint()
         elif not ctrl and (ch := e.text().lower()):
             if ch in SHORTCUTS:
                 self.set_tool(SHORTCUTS[ch])
@@ -647,24 +829,33 @@ class Overlay(QWidget):
 
     # ================================================================ output
     def render(self) -> QImage:
-        s, sc = self.sel, self.cap.scale
-        phys = QRect(round(s.x() * sc), round(s.y() * sc), max(1, round(s.width() * sc)),
-                     max(1, round(s.height() * sc)))
-        out = self.cap.image.copy(phys)
+        s = self.sel
+        out = compose_region(self.s.caps, s)
+        sc = out.width() / max(1.0, s.width())
+        base = out.copy()                          # mosaic/blur read the untouched pixels
         p = QPainter(out)
         p.scale(sc, sc)
-        p.translate(-phys.x() / sc, -phys.y() / sc)   # aligned to the rounded physical crop
-        paint_items(p, self.items, self.cap.image, sc)
+        p.translate(-s.x(), -s.y())
+        paint_items(p, self.items, base, sc, origin=s.topLeft())
         p.end()
         return out
+
+    def select_all(self) -> None:
+        if self.sel is None or self.sel.isEmpty():
+            self.sel = QRectF(self.cap.geometry)
+            self.started.emit()
+            self.activateWindow()
+            self.setFocus()
+        self._sync_bar()
+        self._repaint()
 
     def _finish(self, msg: str = "") -> None:
         if self._finished:
             return
         self._finished = True
         if self.sel:
-            r, g = self.sel, self.cap.geometry
-            self.cfg["last_region"] = [self.cap.screen.name(), r.x() + g.x(), r.y() + g.y(), r.width(), r.height()]
+            r = self.sel                                        # already global desktop coordinates
+            self.cfg["last_region"] = [self.cap.screen.name(), r.x(), r.y(), r.width(), r.height()]
         self.cfg.save()
         if msg:
             self.done.emit(msg)
@@ -691,7 +882,10 @@ class Overlay(QWidget):
         self._commit_text()
         img = self.render()
         default = os.path.join(self.cfg.save_dir(), output.timestamp_name(self.cfg["format"]))
-        self.hide()
+        # Every monitor has a full-screen, always-on-top overlay: hide them ALL, or the ones on the other monitors
+        # would sit above the file dialog and hide it.
+        for o in list(self.s.overlays):
+            o.hide()
         path, _ = QFileDialog.getSaveFileName(None, "Kaydet", default,
                                               "PNG (*.png);;JPEG (*.jpg *.jpeg);;WebP (*.webp)")
         if not path:                      # cancelled: back to editing, nothing lost
@@ -706,7 +900,9 @@ class Overlay(QWidget):
         self._finish(f"Kaydedildi: {path}")
 
     def _reshow(self) -> None:
-        _show(self)
+        for o in list(self.s.overlays):
+            _show(o)
+            o.raise_()
         self.raise_()
         self.activateWindow()
         self.setFocus()
@@ -716,16 +912,16 @@ class Overlay(QWidget):
             return
         self._commit_text()
         img = self.render()
-        pos = self.mapToGlobal(self.sel.topLeft().toPoint())
+        pos = self.sel.topLeft().toPoint()
         self._finish()
-        PinWindow(img, pos, self.cap.scale)
+        PinWindow(img, pos, max(1.0, img.width() / max(1.0, self.sel.width())))
 
     def ocr(self) -> None:
         if not self.sel:
             return
         self._commit_text()
         img = self.render()
-        pos = self.mapToGlobal(self.sel.topLeft().toPoint())
+        pos = self.sel.topLeft().toPoint()
         self._finish()
         from .ocr import run_ocr
         run_ocr(img, pos)
@@ -737,17 +933,10 @@ class Overlay(QWidget):
 
 
 def start_overlays(caps: list[Capture], cfg: Config, done_cb=lambda msg: None, factory=None) -> list:
-    """One frameless overlay per screen; the first one the user starts on wins, the rest close."""
-    overlays = [(factory or Overlay)(c, cfg) for c in caps]
-
-    def keep_only(active: Overlay) -> None:
-        for o in [x for x in overlays if x is not active]:
-            overlays.remove(o)
-            try:
-                o.closed.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            o.close()
+    """One frameless overlay per monitor, all sharing one Session: a selection can start on any monitor and
+    continue onto the next one."""
+    session = Session(caps, cfg)
+    overlays = [(factory or Overlay)(c, cfg, session) for c in caps]
 
     def on_closed() -> None:
         for o in list(overlays):
@@ -758,8 +947,12 @@ def start_overlays(caps: list[Capture], cfg: Config, done_cb=lambda msg: None, f
                 pass
             o.close()
 
+    def under_cursor():
+        pos = QCursor.pos()
+        return next((x for x in overlays if x.cap.geometry.contains(pos)), None)
+
     for o in overlays:
-        o.started.connect(lambda o=o: keep_only(o))
+        o.cursor_target = under_cursor
         o.closed.connect(on_closed)
         o.done.connect(done_cb)
         _show(o)

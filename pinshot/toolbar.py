@@ -81,7 +81,7 @@ class Toolbar(QFrame):
     fill_changed = Signal(bool)
     dash_changed = Signal(bool)
     font_changed = Signal(int)
-    action = Signal(str)      # undo redo delete pin ocr save copy cancel
+    action = Signal(str)      # undo redo delete pin ocr record save copy cancel
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
@@ -160,7 +160,7 @@ class Toolbar(QFrame):
             row.addWidget(b)
         row.addWidget(_sep())
         for n, tip in (("pin", "Ekrana sabitle (F3)"), ("ocr", "Metni tanı – OCR (O)"),
-                       ("save", "Kaydet… (Ctrl+S)")):
+                       ("record", "Bu alanı video olarak kaydet (MP4 / GIF)"), ("save", "Kaydet… (Ctrl+S)")):
             b = _btn(n, tip)
             b.clicked.connect(lambda _=False, n=n: self.action.emit(n))
             row.addWidget(b)

@@ -8,7 +8,7 @@ import signal
 import sys
 import traceback
 
-from PySide6.QtCore import QCoreApplication, QMimeData, QPoint, QTimer, QUrl
+from PySide6.QtCore import QCoreApplication, QMimeData, QPoint, QRect, QRectF, QTimer, QUrl
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QImage
 from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -60,6 +60,9 @@ class App:
         self.rec_toggle: QAction | None = None
         self.selectors: list = []
         self.last_output = ""
+        self._clip_dirty = False
+        self._setting_clip = False
+        QGuiApplication.clipboard().dataChanged.connect(self._clip_changed)
         self.tray = QSystemTrayIcon(app_icon(), qapp)
         self.tray.setToolTip(APP_NAME)
         self._build_menu()
@@ -79,7 +82,7 @@ class App:
 
         def add(label: str, name: str, parent: QMenu | None = None):
             a = QAction(label, m)
-            a.triggered.connect(lambda _=False, n=name: self.dispatch(n))
+            a.triggered.connect(lambda _=False, n=name: self.dispatch(n, True))
             (parent or m).addAction(a)
 
         add("Bölge yakala", "capture")
@@ -118,20 +121,21 @@ class App:
         self.hotkeys.start({self.cfg[k]: a for k, a in HOTKEY_ACTIONS.items()})
 
     # ------------------------------------------------------------ actions
-    def dispatch(self, name: str) -> None:
+    def dispatch(self, name: str, from_menu: bool = False) -> None:
+        lag = 150 if from_menu else 40        # a tray menu needs time to disappear; a hotkey does not
         try:
             if name == "capture":
-                self.capture()
+                self.capture(lag)
             elif name.startswith("delay:"):
                 secs = int(name.split(":")[1])
                 self.notify(f"{secs} saniye sonra yakalanacak")
-                QTimer.singleShot(secs * 1000, self.capture)
+                QTimer.singleShot(secs * 1000, lambda: self.capture(40))
             elif name == "fullscreen":
-                QTimer.singleShot(200, self.capture_fullscreen)
+                QTimer.singleShot(lag + 50, self.capture_fullscreen)
             elif name == "repeat":
-                QTimer.singleShot(200, self.capture_last_region)
+                QTimer.singleShot(lag + 50, self.capture_last_region)
             elif name == "record":
-                self.toggle_recording()
+                self.toggle_recording(lag)
             elif name == "stop_record":
                 self.stop_recording()
             elif name == "pin_clipboard":
@@ -146,8 +150,7 @@ class App:
             elif name == "settings":
                 self.open_settings()
             elif name == "about":
-                QMessageBox.about(None, APP_NAME, f"{APP_NAME} {__version__}\nEkran görüntüsü, çizim, OCR ve "
-                                                  f"ekrana sabitleme.\nGünlükler: {log_dir()}")
+                self.about()
             elif name == "quit":
                 self.quit()
         except Exception:  # noqa: BLE001
@@ -168,10 +171,10 @@ class App:
             return None
         return caps
 
-    def capture(self) -> None:
+    def capture(self, lag: int = 150) -> None:
         if any(o.isVisible() for o in self.overlays if _alive(o)):
             return
-        QTimer.singleShot(150, self._capture_now)       # let menus / hotkey UI disappear first
+        QTimer.singleShot(lag, self._capture_now)
 
     def _capture_now(self) -> None:
         caps = self._grab()
@@ -180,6 +183,7 @@ class App:
             self.overlays = start_overlays(caps, self.cfg, self.notify)
             for o in self.overlays:
                 o.closed.connect(self._overlay_closed)
+                o.record.connect(self._schedule_recording)
 
     def _overlay_closed(self) -> None:
         self.overlays = []                     # drop the references so the screenshots can be freed
@@ -210,10 +214,9 @@ class App:
         caps = self._grab()
         if not caps:
             return
-        name, x, y, w, h = r
-        cap = next((c for c in caps if c.screen.name() == name), None) or caps[0]
-        rect = QPoint(round((x - cap.geometry.x()) * cap.scale), round((y - cap.geometry.y()) * cap.scale))
-        img = cap.image.copy(rect.x(), rect.y(), round(w * cap.scale), round(h * cap.scale))
+        from .capture import compose_region
+        _name, x, y, w, h = r                                   # global desktop coordinates (may span monitors)
+        img = compose_region(caps, QRectF(x, y, w, h))
         if img.isNull():
             self.notify("Son bölge geçersiz")
             return
@@ -246,19 +249,20 @@ class App:
             r.tick.connect(self._rec_tick)
             r.finished.connect(self._rec_finished)
             r.failed.connect(self._rec_failed)
+            r.warning.connect(self.notify)
             self._recorder = r
         return self._recorder
 
     def _recording_active(self) -> bool:
         return self._recorder is not None and self._recorder.active
 
-    def toggle_recording(self) -> None:
+    def toggle_recording(self, lag: int = 150) -> None:
         if self._recording_active():
             self.stop_recording()
         else:
-            self.pick_recording_area()
+            self.pick_recording_area(lag)
 
-    def pick_recording_area(self) -> None:
+    def pick_recording_area(self, lag: int = 150) -> None:
         if self.selectors or any(_alive(o) and o.isVisible() for o in self.overlays):
             return
         from .recorder import find_ffmpeg
@@ -268,7 +272,7 @@ class App:
         if QGuiApplication.platformName().startswith("wayland"):
             self.notify("Wayland'de ekran kaydı desteklenmiyor. X11 / XWayland oturumu gerekir.")
             return
-        QTimer.singleShot(150, self._open_selectors)
+        QTimer.singleShot(lag, self._open_selectors)
 
     def _open_selectors(self) -> None:
         caps = self._grab()
@@ -278,36 +282,58 @@ class App:
         from .record_ui import RecordSelector
         self.selectors = start_overlays(caps, self.cfg, self.notify, factory=RecordSelector)
         for o in self.selectors:
-            o.chosen.connect(self._start_recording)
+            o.chosen.connect(self._schedule_recording)
             o.closed.connect(self._selector_closed)
 
     def _selector_closed(self) -> None:
         self.selectors = []
         QTimer.singleShot(500, release_memory)
 
+    def _schedule_recording(self, info: dict) -> None:
+        QTimer.singleShot(350, lambda: self._start_recording(info))   # let the picker/overlay vanish first
+
     def _start_recording(self, info: dict) -> None:
-        from .record_ui import RecordingBar, RecordingFrame
+        from .record_ui import RecordingFrame, RecordingIsland
         screen, region, fmt, fps = info["screen"], info["region"], info["fmt"], info["fps"]
+        width = info.get("max_width")
+        self._clip_dirty = False          # did the user copy something while we record?
         path = output.unique_path(os.path.join(self.cfg.save_dir(), output.timestamp_name(fmt)))
         if not self.recorder.start(screen, region, fmt, fps, path, int(self.cfg["record_max_seconds"]),
-                                   bool(self.cfg["record_cursor"])):
+                                   bool(self.cfg["record_cursor"]), width,
+                                   bool(info.get("audio_system")), bool(info.get("audio_mic")),
+                                   str(info.get("mic_device") or ""), bool(info.get("hq444"))):
             return
-        g = region.translated(screen.geometry().topLeft())
-        self.rec_frame = RecordingFrame(g)
+        g = QRect(region)                                       # global desktop coordinates, may span monitors
+        involved = [sc for sc in QGuiApplication.screens() if sc.geometry().intersects(g)] or [screen]
+        union = QRect()
+        for sc in involved:
+            union = union.united(sc.geometry())
+        self.rec_frame = RecordingFrame(g, union)
         self.rec_frame.show()
-        self.rec_bar = RecordingBar()
-        self.rec_bar.stop_requested.connect(self.stop_recording)
-        if self.rec_bar.place_outside(g, screen.geometry()):
-            self.rec_bar.show()
-        else:                                    # the region fills the screen: a bar would end up in the video
-            self.rec_bar.deleteLater()
-            self.rec_bar = None
+        island = RecordingIsland(fmt.upper(), min(fps, 50) if fmt == "gif" else fps)
+        island.stop_requested.connect(self.stop_recording)
+        island.moved.connect(self._island_moved)
+        screens = [sc.geometry() for sc in QGuiApplication.screens()]
+        saved = self.cfg["island_pos"]
+        if saved and island.is_on_screen(QPoint(*saved), screens):
+            island.move(QPoint(*saved))                      # the user placed it there last time
+        else:
+            island.place_default(g, union, [sc.geometry() for sc in QGuiApplication.screens() if sc not in involved])
+        island.show()
+        self.rec_bar = island
+        # the island may be dragged over the recorded area: the recorder paints it out of the video
+        self.recorder.exclude = lambda: island.frameGeometry() if island.isVisible() else None
         self.tray.setIcon(recording_icon())
         self.tray.setToolTip("PinShot – kayıt sürüyor")
         if self.rec_toggle:
             self.rec_toggle.setText("Kaydı durdur")
         hk = self.cfg["hotkey_record"]
-        self.notify("Kayıt başladı. Durdurmak için tepsi simgesi" + (" veya kısayol" if hk else "") + " kullanılabilir.")
+        self.notify("Kayıt başladı. Durdurmak için adadaki ■ düğmesi, tepsi simgesi" + (" veya kısayol" if hk else "")
+                    + " kullanılabilir. Adayı istediğin yere sürükleyebilirsin.")
+
+    def _island_moved(self, pos: QPoint) -> None:
+        self.cfg["island_pos"] = [pos.x(), pos.y()]
+        self.cfg.save()
 
     def _rec_tick(self, secs: int) -> None:
         if self.rec_bar:
@@ -320,6 +346,8 @@ class App:
         self._end_recording_ui()
 
     def _end_recording_ui(self) -> None:
+        if self._recorder is not None:
+            self._recorder.exclude = None            # the island is about to be destroyed
         for w in (self.rec_frame, self.rec_bar):
             if w is not None:
                 w.close()
@@ -329,16 +357,32 @@ class App:
         self.tray.setToolTip(APP_NAME)
         if self.rec_toggle:
             self.rec_toggle.setText("Ekranı video olarak kaydet (GIF / MP4)…")
-        QTimer.singleShot(1000, release_memory)
+        QTimer.singleShot(1000, lambda: release_memory(True))
+
+    def _clip_changed(self) -> None:
+        if not self._setting_clip:
+            self._clip_dirty = True
 
     def _rec_finished(self, path: str) -> None:
         self.last_output = path
-        mime = QMimeData()
-        mime.setUrls([QUrl.fromLocalFile(path)])
-        QGuiApplication.clipboard().setMimeData(mime)       # paste the file straight into a chat or e-mail
+        copied = not self._clip_dirty
+        if copied:                    # paste the file into a chat / e-mail, unless the user copied something newer
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(path)])
+            self._setting_clip = True
+            QGuiApplication.clipboard().setMimeData(mime)
+            self._setting_clip = False
         size = os.path.getsize(path) / 1024 / 1024
-        self.notify(f"Kayıt hazır ({size:.1f} MB), dosya panoya kopyalandı. Klasörü açmak için tıkla.")
-        release_memory()
+        st = self._recorder.last_stats if self._recorder else {}
+        extra = ""
+        if st:
+            achieved = st["frames"] / st["seconds"]
+            target = min(st["fps"], 50) if st["fmt"] == "gif" else st["fps"]
+            if achieved < target * 0.85:                      # be honest when the machine could not keep up
+                extra = f" Bilgisayar {target} fps'i yakalayamadı (ortalama {achieved:.0f} fps)."
+        where = "dosya panoya kopyalandı" if copied else "panonuza dokunulmadı"
+        self.notify(f"Kayıt hazır ({size:.1f} MB), {where}.{extra} Klasörü açmak için tıkla.")
+        release_memory(True)
 
     def _rec_failed(self, msg: str) -> None:
         self._end_recording_ui()
@@ -347,6 +391,23 @@ class App:
     def _reveal_output(self) -> None:
         if self.last_output:
             QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(self.last_output)))
+
+    def about(self) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QLabel
+        box = QMessageBox()
+        box.setWindowTitle(f"{APP_NAME} hakkında")
+        box.setIconPixmap(app_icon().pixmap(64, 64))
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(f"<h3>{APP_NAME} {__version__}</h3>"
+                    "Created by <b>Nuri Can OZTURK</b><br>"
+                    '<a href="https://github.com/nuricanozturk01">https://github.com/nuricanozturk01</a>'
+                    f"<br><br><small>Ekran görüntüsü, çizim, OCR, ekrana sabitleme ve ekran kaydı.<br>"
+                    f"Günlükler: {log_dir()}</small>")
+        for lab in box.findChildren(QLabel):
+            lab.setOpenExternalLinks(True)
+            lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        box.exec()
 
     def quit(self) -> None:
         if self._recorder is not None:
@@ -402,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     if not server.listen():
         log.warning("IPC server could not listen; single-instance guard disabled")
     app = App(qapp)
-    QTimer.singleShot(4000, release_memory)               # drop start-up garbage (matters most on Windows)
+    QTimer.singleShot(4000, lambda: release_memory(True))               # drop start-up garbage (matters most on Windows)
     server.command.connect(lambda c: app.dispatch(c) if c != "ping" else app.notify("PinShot zaten çalışıyor"))
     signal.signal(signal.SIGINT, lambda *_: app.quit())
     keepalive = QTimer()                                    # only for Ctrl+C in a terminal: no idle wake-ups otherwise

@@ -9,7 +9,7 @@ sys.path.insert(0, ROOT)
 from pinshot import __version__  # noqa: E402
 
 datas, binaries, hiddenimports = [], [], []
-for pkg in ("rapidocr_onnxruntime", "onnxruntime", "imageio_ffmpeg"):   # OCR models + native libs, ffmpeg binary
+for pkg in ("rapidocr_onnxruntime", "onnxruntime", "imageio_ffmpeg", "soundcard"):   # OCR models + native libs, ffmpeg binary
     try:
         d, b, h = collect_all(pkg)
         datas += d
@@ -18,7 +18,7 @@ for pkg in ("rapidocr_onnxruntime", "onnxruntime", "imageio_ffmpeg"):   # OCR mo
     except Exception as ex:                               # engine not installable on this platform
         print(f"WARNING: {pkg} not bundled: {ex}")
 
-hiddenimports += ["pynput.keyboard._xorg", "pynput.mouse._xorg", "pynput.keyboard._win32",
+hiddenimports += ["_cffi_backend", "pynput.keyboard._xorg", "pynput.mouse._xorg", "pynput.keyboard._win32",
                   "pynput.mouse._win32", "pynput.keyboard._darwin", "pynput.mouse._darwin"]
 excludes = ["tkinter", "matplotlib", "scipy", "pandas", "PyQt5", "PyQt6", "PySide2"]
 
@@ -41,5 +41,6 @@ if sys.platform == "darwin":
                      "LSUIElement": True,                  # menu-bar app, no Dock icon
                      "NSHighResolutionCapable": True,
                      "NSScreenCaptureUsageDescription": "PinShot needs Screen Recording access to take screenshots.",
+                     "NSMicrophoneUsageDescription": "PinShot records your microphone when you turn it on for a screen recording.",
                      "NSAppleEventsUsageDescription": "PinShot uses global shortcuts.",
                  })

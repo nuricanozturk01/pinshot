@@ -14,7 +14,7 @@ _engine = None
 _lock = threading.Lock()
 _workers: set = set()
 _unload_timer: QTimer | None = None
-UNLOAD_AFTER_MS = 60_000       # free the ~100 MB engine when OCR has not been used for a minute
+UNLOAD_AFTER_MS = 300_000      # free the ~100 MB engine after 5 idle minutes (a second OCR is instant before that)
 
 
 class OcrUnavailable(RuntimeError):

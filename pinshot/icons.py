@@ -106,6 +106,11 @@ def _draw(name: str, p: QPainter, c: QColor) -> None:
         p.drawLine(QPointF(12, 3), QPointF(12, 21))
         p.drawPolygon(_pts(9, 6, 9, 18, 3, 18))
         p.drawPolygon(_pts(15, 6, 15, 18, 21, 18))
+    elif name == "record":
+        p.drawEllipse(QRectF(3.5, 3.5, 17, 17))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#ff453a"))
+        p.drawEllipse(QRectF(8, 8, 8, 8))
     elif name == "plus":
         p.drawLine(QPointF(12, 5), QPointF(12, 19))
         p.drawLine(QPointF(5, 12), QPointF(19, 12))

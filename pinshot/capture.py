@@ -166,3 +166,34 @@ def grab_screens() -> list[Capture]:
 
 def screen_under_cursor(caps: list[Capture], pos) -> Capture:
     return next((c for c in caps if c.geometry.contains(pos)), caps[0])
+
+
+def compose_region(caps: list[Capture], rect) -> QImage:
+    """One image of a desktop rectangle (logical coords) that may span several monitors.
+
+    The output uses the highest scale factor among the monitors involved, so nothing is downsampled; a monitor with a
+    lower scale is upscaled. With a single monitor this is an exact pixel copy."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainter
+    rect = QRectF(rect)
+    parts = []
+    for c in caps:
+        inter = QRectF(c.geometry).intersected(rect)
+        if inter.width() > 0 and inter.height() > 0 and not c.image.isNull():
+            parts.append((c, inter))
+    scale = max((c.scale for c, _ in parts), default=1.0)
+    out = QImage(max(1, round(rect.width() * scale)), max(1, round(rect.height() * scale)), QImage.Format.Format_RGB32)
+    out.fill(0)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    for c, inter in parts:
+        src = QRect(round((inter.x() - c.geometry.x()) * c.scale), round((inter.y() - c.geometry.y()) * c.scale),
+                    max(1, round(inter.width() * c.scale)), max(1, round(inter.height() * c.scale)))
+        dx, dy = round((inter.x() - rect.x()) * scale), round((inter.y() - rect.y()) * scale)
+        if abs(c.scale - scale) < 1e-6:                    # same scale: exact copy, no resampling blur
+            p.drawImage(dx, dy, c.image, src.x(), src.y(), src.width(), src.height())
+        else:
+            p.drawImage(QRect(dx, dy, max(1, round(inter.width() * scale)), max(1, round(inter.height() * scale))),
+                        c.image, src)
+    p.end()
+    return out

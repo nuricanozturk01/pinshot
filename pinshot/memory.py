@@ -6,14 +6,16 @@ import gc
 import sys
 
 
-def release_memory() -> None:
+def release_memory(aggressive: bool = False) -> None:
+    """Give freed memory back. On Windows, trimming the working set makes the next window paint page-fault, so it
+    is only done when `aggressive` (start-up, after a recording) and never right before the user's next capture."""
     gc.collect()
     try:
         if sys.platform.startswith("linux"):
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         elif sys.platform == "darwin":
             ctypes.CDLL("/usr/lib/libSystem.B.dylib").malloc_zone_pressure_relief(None, 0)
-        elif sys.platform == "win32":
+        elif sys.platform == "win32" and aggressive:
             k32 = ctypes.windll.kernel32
             k32.GetCurrentProcess.restype = ctypes.c_void_p
             k32.SetProcessWorkingSetSize(ctypes.c_void_p(k32.GetCurrentProcess()),

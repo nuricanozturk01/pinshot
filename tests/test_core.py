@@ -186,3 +186,263 @@ def test_ocr_reads_text(qapp):
     if not ("pinshot" in text or "hello" in text):
         from pinshot.selftest import ocr_diagnostics
         pytest.fail(f"OCR returned {text!r} for a {img.width()}x{img.height()} image\n{ocr_diagnostics(img)}")
+
+
+def test_ctrl_a_selects_screen_under_cursor(qapp, overlay):
+    """Keyboard focus may sit on another monitor: Ctrl+A must act on the overlay returned by cursor_target."""
+    other = overlay
+    redirected = []
+    other.cursor_target = lambda: (redirected.append(1) or other)
+    QTest.keyClick(other, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    assert redirected and other.sel is not None
+    assert other.sel.toRect().size() == other.rect().size()
+
+
+def test_record_request_emits_region_and_format(overlay):
+    o = overlay
+    select_region(o)
+    got = []
+    o.record.connect(got.append)
+    o.request_record("gif")
+    assert got and got[0]["fmt"] == "gif" and got[0]["region"].width() == 300
+    assert got[0]["screen"] is o.cap.screen
+
+
+def test_record_request_rejects_tiny_area(overlay):
+    from PySide6.QtCore import QRectF
+    o = overlay
+    o.sel = QRectF(10, 10, 5, 5)
+    got = []
+    o.record.connect(got.append)
+    o.request_record("mp4")
+    assert not got
+
+
+def test_record_request_uses_chosen_fps_and_remembers_it(overlay):
+    o = overlay
+    select_region(o)
+    got = []
+    o.record.connect(got.append)
+    o.request_record("mp4", 60)
+    assert got[0]["fps"] == 60 and o.cfg["record_fps"] == 60 and o.cfg["record_format"] == "mp4"
+
+
+def test_gif_fps_is_capped_at_50(overlay):
+    o = overlay
+    select_region(o)
+    got = []
+    o.record.connect(got.append)
+    o.request_record("gif", 60)
+    assert got[0]["fps"] == 50
+
+
+def test_record_popup_offers_audio_and_format_choices(overlay):
+    from pinshot.record_ui import RecordPopup
+    o = overlay
+    select_region(o)
+    o.cfg["record_format"], o.cfg["record_fps"] = "mp4", 30
+    pop = RecordPopup(o, o.cfg)
+    opts = pop.opts
+    assert [opts.fps.itemData(i) for i in range(opts.fps.count())] == [10, 15, 24, 30, 60]
+    opts.fmt.setCurrentText("GIF")
+    assert [opts.fps.itemData(i) for i in range(opts.fps.count())] == [10, 15, 24, 30, 50]
+    assert not opts.sys_cb.isEnabled() and not opts.mic_cb.isEnabled()       # GIFs have no sound
+    assert "GIF" in opts.mic_cb.toolTip()
+    opts.fmt.setCurrentText("MP4")
+    got = []
+    o.record.connect(got.append)
+    pop.chosen.connect(lambda v: o.request_record(v["fmt"], v["fps"], max_width=v["max_width"]))
+    opts.fps.setCurrentIndex(opts.fps.findData(60))
+    pop._go()
+    assert got and got[0]["fps"] == 60 and got[0]["fmt"] == "mp4"
+    assert o.cfg["record_fps"] == 60
+
+
+def test_record_options_remember_audio_choice_per_mp4_only(overlay):
+    from pinshot.record_ui import persist_choice
+    c = overlay.cfg
+    persist_choice(c, {"fmt": "mp4", "fps": 30, "max_width": 0, "audio_system": True, "audio_mic": True,
+                       "mic_device": "USB Mic"})
+    persist_choice(c, {"fmt": "gif", "fps": 15, "max_width": 1920, "audio_system": False, "audio_mic": False,
+                       "mic_device": ""})
+    assert c["record_audio_system"] and c["record_audio_mic"] and c["record_mic_device"] == "USB Mic"   # GIF keeps them
+    assert c["record_fps"] == 30 and c["record_fps_gif"] == 15
+
+
+def test_record_request_carries_audio_settings(overlay):
+    o = overlay
+    select_region(o)
+    got = []
+    o.record.connect(got.append)
+    o.request_record("mp4", 30, max_width=0, audio_system=True, audio_mic=True, mic_device="USB Mic")
+    r = got[0]
+    assert r["audio_system"] and r["audio_mic"] and r["mic_device"] == "USB Mic" and r["max_width"] == 0
+
+
+def test_gif_request_never_carries_audio(overlay):
+    o = overlay
+    select_region(o)
+    got = []
+    o.record.connect(got.append)
+    o.request_record("gif", 15, audio_system=True, audio_mic=True)
+    assert not got[0]["audio_system"] and not got[0]["audio_mic"]       # no sound in GIFs
+
+
+def test_loupe_only_on_monitor_with_cursor(overlay, monkeypatch):
+    """Every monitor has its own overlay; only the one under the real cursor may draw the magnifier."""
+    from PySide6.QtCore import QPoint
+    import pinshot.overlay as ov
+    o = overlay
+    g = o.cap.geometry
+    calls = []
+    orig = ov.Overlay._draw_loupe
+    monkeypatch.setattr(ov.QCursor, "pos", staticmethod(lambda: QPoint(g.x() + 50, g.y() + 60)))
+    assert o._cursor_local() == QPointF(50, 60)
+    monkeypatch.setattr(ov.QCursor, "pos", staticmethod(lambda: QPoint(g.right() + 500, g.y())))   # another monitor
+    assert o._cursor_local() is None
+    drawn = []
+    from PySide6.QtGui import QImage, QPainter
+    img = QImage(o.size(), QImage.Format.Format_RGB32)
+    p = QPainter(img)
+    o._draw_pill = lambda *a, **k: drawn.append(a)        # the loupe labels go through _draw_pill
+    orig(o, p)
+    p.end()
+    assert not drawn                                      # nothing drawn: cursor is elsewhere
+
+
+def test_record_options_explain_missing_microphone(overlay, monkeypatch):
+    """No microphone: the reason must be visible (not just a tooltip) and a way to fix it offered."""
+    import pinshot.audio as audio
+    from pinshot.record_ui import RecordOptions
+    monkeypatch.setattr(audio, "probe", lambda: {"system": (True, ""), "mic": (False, "Mikrofon bulunamadı. TEST-İPUCU")})
+    monkeypatch.setattr(audio, "list_microphones", lambda: [])
+    opts = RecordOptions(overlay.cfg)
+    opts.show()
+    assert not opts.mic_cb.isEnabled() and opts.sys_cb.isEnabled()
+    assert "TEST-İPUCU" in opts.audio_note.text() and opts.audio_note.isVisible()
+    assert opts.settings_btn.isVisible() and opts.refresh_btn.isVisible()
+    # a microphone appears (plugged in / enabled): Yenile picks it up
+    monkeypatch.setattr(audio, "probe", lambda: {"system": (True, ""), "mic": (True, "")})
+    monkeypatch.setattr(audio, "list_microphones", lambda: ["USB Mic", "Headset Mic"])
+    opts.refresh_btn.click()
+    assert opts.mic_cb.isEnabled() and not opts.audio_note.isVisible()
+    assert [opts.mic_dev.itemText(i) for i in range(opts.mic_dev.count())] == [opts.DEFAULT_MIC, "USB Mic", "Headset Mic"]
+    opts.mic_cb.setChecked(True)
+    opts.mic_dev.setCurrentIndex(2)
+    v = opts.values()
+    assert v["audio_mic"] and v["mic_device"] == "Headset Mic"
+
+
+def test_record_options_gif_hides_audio_controls(overlay):
+    from pinshot.record_ui import RecordOptions
+    opts = RecordOptions(overlay.cfg)
+    opts.show()
+    opts.fmt.setCurrentText("GIF")
+    assert not opts.mic_dev.isVisible() and not opts.hq_cb.isVisible() and not opts.audio_note.isVisible()
+    assert not opts.values()["audio_mic"] and not opts.values()["hq444"]
+
+
+def test_compose_region_stitches_two_monitors_exactly(qapp):
+    """A selection that spans two monitors is built from each monitor's own pixels, with no resampling."""
+    from PySide6.QtCore import QRect, QRectF
+    from PySide6.QtGui import QColor, QGuiApplication, QImage
+    from pinshot.capture import Capture, compose_region
+    scr = QGuiApplication.primaryScreen()
+    left_img = QImage(100, 80, QImage.Format.Format_RGB32)
+    left_img.fill(QColor("red"))
+    right_img = QImage(120, 80, QImage.Format.Format_RGB32)
+    right_img.fill(QColor("blue"))
+    caps = [Capture(scr, left_img, QRect(0, 0, 100, 80), 1.0), Capture(scr, right_img, QRect(100, 0, 120, 80), 1.0)]
+    out = compose_region(caps, QRectF(60, 10, 100, 40))                 # 40 px from the left monitor, 60 from the right
+    assert (out.width(), out.height()) == (100, 40)
+    assert QColor(out.pixel(5, 5)) == QColor("red") and QColor(out.pixel(39, 20)) == QColor("red")
+    assert QColor(out.pixel(40, 20)) == QColor("blue") and QColor(out.pixel(99, 39)) == QColor("blue")
+
+
+def test_compose_region_uses_highest_scale_when_monitors_differ(qapp):
+    from PySide6.QtCore import QRect, QRectF
+    from PySide6.QtGui import QColor, QGuiApplication, QImage
+    from pinshot.capture import Capture, compose_region
+    scr = QGuiApplication.primaryScreen()
+    lo = QImage(100, 100, QImage.Format.Format_RGB32)
+    lo.fill(QColor("red"))
+    hi = QImage(200, 200, QImage.Format.Format_RGB32)               # same 100x100 logical area at scale 2
+    hi.fill(QColor("blue"))
+    caps = [Capture(scr, lo, QRect(0, 0, 100, 100), 1.0), Capture(scr, hi, QRect(100, 0, 100, 100), 2.0)]
+    out = compose_region(caps, QRectF(50, 0, 100, 50))
+    assert (out.width(), out.height()) == (200, 100)                  # output at the sharper monitor's scale
+
+
+def test_selection_is_shared_and_global_across_overlays(qapp, tmp_path):
+    """Two overlays on adjacent monitors share one selection in global coordinates."""
+    from PySide6.QtCore import QRect, QRectF
+    from PySide6.QtGui import QColor, QGuiApplication, QImage
+    from pinshot.capture import Capture
+    from pinshot.overlay import Overlay, Session
+    scr = QGuiApplication.primaryScreen()
+    cfg = Config(str(tmp_path / "c.json"))
+    def cap(x):
+        im = QImage(300, 200, QImage.Format.Format_RGB32)
+        im.fill(QColor("gray"))
+        return Capture(scr, im, QRect(x, 0, 300, 200), 1.0)
+    caps = [cap(0), cap(300)]
+    sess = Session(caps, cfg)
+    a, b = Overlay(caps[0], cfg, sess), Overlay(caps[1], cfg, sess)
+    sess.sel = QRectF(250, 20, 120, 80)                                # starts on A, ends on B
+    assert a.sel == b.sel and b.sel.right() == 370
+    assert sess.host() is b                                            # toolbar goes where the bottom-right corner is
+    assert sess.bounds == QRectF(0, 0, 600, 200)
+    out = a.render()
+    assert (out.width(), out.height()) == (120, 80)
+    a.close()
+    b.close()
+
+
+def test_save_dialog_is_not_covered_by_overlays_on_other_monitors(qapp, tmp_path, monkeypatch):
+    """Ctrl+S: every monitor's overlay must be hidden while the file dialog is open (they are always-on-top)."""
+    from PySide6.QtCore import QRect, QRectF
+    from PySide6.QtGui import QColor, QGuiApplication, QImage
+    import pinshot.overlay as ov
+    from pinshot.capture import Capture
+    scr = QGuiApplication.primaryScreen()
+    cfg = Config(str(tmp_path / "c.json"))
+    def cap(x):
+        im = QImage(300, 200, QImage.Format.Format_RGB32)
+        im.fill(QColor("gray"))
+        return Capture(scr, im, QRect(x, 0, 300, 200), 1.0)
+    caps = [cap(0), cap(300)]
+    a, b = ov.start_overlays(caps, cfg)
+    a.sel = QRectF(10, 10, 100, 80)
+    seen = {}
+
+    def fake_dialog(*args, **kwargs):
+        seen["visible_during_dialog"] = [o.isVisible() for o in (a, b)]
+        return "", ""                                         # user cancels
+
+    monkeypatch.setattr(ov.QFileDialog, "getSaveFileName", staticmethod(fake_dialog))
+    a.save()
+    assert seen["visible_during_dialog"] == [False, False]      # nothing may stay above the dialog
+    assert a.isVisible() and b.isVisible()                      # cancelled: everything comes back, selection intact
+    assert a.sel is not None
+    a.close()
+
+
+def test_pointer_position_outside_window_uses_real_cursor(overlay, monkeypatch):
+    """Mixed-scale monitors: while dragging out of this window, event coordinates use *this* window's scale and are
+    wrong; the real cursor position must be used instead."""
+    from PySide6.QtCore import QPoint, QPointF
+    import pinshot.overlay as ov
+
+    class Ev:
+        def __init__(self, p):
+            self._p = p
+
+        def position(self):
+            return self._p
+
+    o = overlay
+    inside = QPointF(40, 50)
+    assert o._gp(Ev(inside)) == inside + QPointF(o.origin)                       # normal case: exact local position
+    far = QPointF(o.width() + 900, o.height() + 700)                              # pointer is on another monitor
+    monkeypatch.setattr(ov.QCursor, "pos", staticmethod(lambda: QPoint(3904, 1120)))
+    assert o._gp(Ev(far)) == QPointF(3904, 1120)
