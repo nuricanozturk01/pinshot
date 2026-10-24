@@ -23,6 +23,16 @@ AVF_LISTING = """\
 """
 
 
+@pytest.fixture(autouse=True)
+def _no_gc_in_worker_threads():
+    """These tests start many threads; keep the cyclic GC off so it cannot run (and destroy Qt objects) in them."""
+    import gc
+    gc.disable()
+    yield
+    gc.enable()
+    gc.collect()
+
+
 def wait_until(cond, timeout=15.0):
     end = time.time() + timeout
     while time.time() < end:

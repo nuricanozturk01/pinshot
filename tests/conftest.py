@@ -1,3 +1,4 @@
+import gc
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -12,6 +13,15 @@ from PySide6.QtWidgets import QApplication
 from pinshot.capture import Capture
 from pinshot.config import Config
 from pinshot.overlay import Overlay
+
+
+@pytest.fixture(autouse=True)
+def _collect_garbage_on_the_main_thread():
+    """Qt objects may only be destroyed on the GUI (main) thread. Python's cyclic garbage collector can run in ANY thread;
+    when it ran inside a worker thread of a later test it destroyed leftover widgets there and crashed the process
+    (a sporadic segmentation fault). So garbage is collected here, on the main thread, after every test."""
+    yield
+    gc.collect()
 
 
 @pytest.fixture(scope="session")

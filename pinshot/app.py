@@ -1,6 +1,7 @@
 """Tray application: hotkeys, single instance, capture flows. Entry point: `python -m pinshot` / `pinshot`."""
 from __future__ import annotations
 
+import gc
 import logging
 import logging.handlers
 import os
@@ -449,6 +450,9 @@ def main(argv: list[str] | None = None) -> int:
         i = argv.index("--selftest")
         return run(argv[i + 1] if i + 1 < len(argv) else None)
     tune_malloc()                      # before Qt/pynput start threads
+    # PySide objects must be destroyed on the main thread, but Python's cyclic GC can run in any thread. A very high
+    # threshold makes automatic runs rare; release_memory() collects on the main thread after every capture/recording.
+    gc.set_threshold(50_000, 20, 20)
     setup_logging()
     QCoreApplication.setApplicationName(APP_NAME)
     QCoreApplication.setOrganizationName(APP_NAME)
