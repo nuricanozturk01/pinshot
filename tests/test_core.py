@@ -476,3 +476,31 @@ def test_shortcut_permission_checks_are_harmless_off_macos():
     if _sys.platform != "darwin":
         assert mp.input_monitoring_ok() is None and mp.accessibility_ok() is None
         assert mp.shortcuts_permitted() is True
+
+
+def test_ocr_window_runs_the_engine_in_its_worker_thread(qapp):
+    """The path a user triggers (window + QThread + Qt event loop), not just the bare function."""
+    pytest.importorskip("rapidocr_onnxruntime")
+    from pinshot.selftest import run_ocr_window
+    text = run_ocr_window().replace(" ", "").lower()
+    assert "pinshot" in text or "hello" in text
+
+
+def test_ocr_error_is_shown_to_the_user(qapp, monkeypatch):
+    """When OCR fails the window must say why (a silent failure reads as "OCR does not work")."""
+    import time
+    from pinshot import ocr
+    from pinshot.selftest import make_text_image
+
+    def boom(_img):
+        raise RuntimeError("model could not be loaded")
+
+    monkeypatch.setattr(ocr, "recognize", boom)
+    win = ocr.OcrWindow(make_text_image(), None)
+    end = time.time() + 20
+    while time.time() < end and win.status.text() != "OCR başarısız":
+        qapp.processEvents()
+        time.sleep(0.02)
+    assert win.status.text() == "OCR başarısız"
+    assert "model could not be loaded" in win.edit.toPlainText()
+    win.close()

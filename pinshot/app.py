@@ -336,9 +336,8 @@ class App:
         self.tray.setToolTip("PinShot – kayıt sürüyor")
         if self.rec_toggle:
             self.rec_toggle.setText("Kaydı durdur")
-        hk = self.cfg["hotkey_record"]
-        self.notify("Kayıt başladı. Durdurmak için adadaki ■ düğmesi, tepsi simgesi" + (" veya kısayol" if hk else "")
-                    + " kullanılabilir. Adayı istediğin yere sürükleyebilirsin.")
+        # No "recording started" notification: on macOS it is a large banner at the top right that ends up IN the video
+        # (and the island + red tray icon already show that a recording is running).
 
     def _island_moved(self, pos: QPoint) -> None:
         self.cfg["island_pos"] = [pos.x(), pos.y()]
@@ -350,8 +349,8 @@ class App:
 
     def stop_recording(self) -> None:
         if self._recording_active():
+            self.recorder.stop()                # first stop capturing, so nothing we show can appear in the video
             self.notify("Kayıt kaydediliyor…")
-            self.recorder.stop()
         self._end_recording_ui()
 
     def _end_recording_ui(self) -> None:

@@ -74,6 +74,29 @@ def ocr_diagnostics(img) -> str:
     return "\n".join(out)
 
 
+def run_ocr_window(timeout: float = 90.0) -> str:
+    """Open the real OCR window (worker thread + Qt event loop, like a user would) and return the recognised text."""
+    import time
+    from PySide6.QtWidgets import QApplication
+    from .ocr import OcrWindow
+    app = QApplication.instance()
+    win = OcrWindow(make_text_image(), None)
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        app.processEvents()
+        text = win.edit.toPlainText()
+        if win.copy_btn.isEnabled() and text.strip():
+            win.close()
+            return text
+        if win.status.text() in ("OCR başarısız", "Metin bulunamadı."):
+            msg = f"{win.status.text()}: {text}"
+            win.close()
+            raise AssertionError(msg)
+        time.sleep(0.02)
+    win.close()
+    raise AssertionError(f"OCR window did not finish within {timeout:.0f} s")
+
+
 def run(outfile: str | None) -> int:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     lines: list[str] = []
@@ -145,7 +168,10 @@ def run(outfile: str | None) -> int:
         text = recognize(img).replace(" ", "").lower()
         if not ("pinshot" in text or "hello" in text):
             raise AssertionError(f"unexpected OCR output: {text!r}\nDIAGNOSTICS:\n{ocr_diagnostics(img)}")
-        return "ocr"
+        # the same thing through the real window and its worker thread (what the user actually triggers)
+        shown = run_ocr_window().replace(" ", "").lower()
+        assert "pinshot" in shown or "hello" in shown, f"OCR window returned {shown!r}"
+        return "ocr + window"
 
     def video() -> str:
         import platform

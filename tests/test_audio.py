@@ -75,6 +75,16 @@ def fake(monkeypatch):
     return sc
 
 
+def wait_until(cond, timeout=15.0, step=0.05):
+    """Poll instead of sleeping a fixed time: CI machines (especially macOS runners) are slow and uneven."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(step)
+    return False
+
+
 def _peaks(track):
     data = np.frombuffer(open(track.path, "rb").read(), dtype="<i2")
     return data
@@ -83,7 +93,7 @@ def _peaks(track):
 def test_records_mic_and_system(fake):
     rec = AudioRecorder(True, True)
     assert rec.start() == []
-    time.sleep(0.6)
+    assert wait_until(lambda: all(t.nbytes > 0 for t in rec.tracks)), "both sources must produce audio"
     rec.request_stop()
     tracks = rec.finish()
     assert {t.label for t in tracks} == {"Sistem sesi", "Mikrofon"}
@@ -105,31 +115,32 @@ def test_system_sound_follows_the_default_output_when_it_changes(fake):
     """Headset switches A2DP -> HFP while recording: the old sink vanishes, capture must continue on the new one."""
     rec = AudioRecorder(True, False)
     rec.start()
-    time.sleep(0.5)
+    assert wait_until(lambda: rec.tracks and rec.tracks[0].nbytes > 0)
     fake.monitors["sink-a2dp"].dead = True            # old output disappears...
     fake.sink = "sink-hfp"                            # ...and a new default output appears
-    time.sleep(2.4)
+    assert wait_until(lambda: "sink-hfp.monitor" in [d for k, d in fake.log if k == "open"]), "must reopen on the new output"
+    n = rec.tracks[0].nbytes
+    assert wait_until(lambda: rec.tracks[0].nbytes > n + 48000 * 4 * 0.3), "audio must keep flowing on the new device"
     rec.request_stop()
     tracks = rec.finish()
     assert tracks, "recording must survive the switch"
-    opened = [d for kind, d in fake.log if kind == "open"]
-    assert "sink-hfp.monitor" in opened, opened
-    data = _peaks(tracks[0])
-    assert (np.abs(data) > 0.28 * 32767).any()        # samples from the new device (level 0.3) are in the file
+    assert (np.abs(_peaks(tracks[0])) > 0.28 * 32767).any()        # samples from the new device (level 0.3) are in the file
     AudioRecorder.discard(tracks)
 
 
 def test_system_sound_recovers_from_a_dropped_stream(fake):
     rec = AudioRecorder(True, False)
     rec.start()
-    time.sleep(0.4)
+    assert wait_until(lambda: rec.tracks and rec.tracks[0].nbytes > 0)
     dev = fake.monitors["sink-a2dp"]
     dev.dead = True
-    threading.Timer(0.8, lambda: setattr(dev, "dead", False)).start()      # device comes back
-    time.sleep(2.0)
+    time.sleep(1.0)                                    # the stream stays broken for a while (several retries)
+    n = rec.tracks[0].nbytes
+    dev.dead = False                                   # device comes back
+    assert wait_until(lambda: rec.tracks[0].nbytes > n + 48000 * 4 * 0.3), "recording must resume by itself"
     rec.request_stop()
     tracks = rec.finish()
-    assert tracks and tracks[0].nbytes > 48000 * 2 * 2 * 1.0                # more than a second of audio in total
+    assert tracks
     AudioRecorder.discard(tracks)
 
 
@@ -157,7 +168,7 @@ def test_system_sound_never_picks_the_microphone_when_names_collide(fake):
     assert _loopback_source(fake) is mon
     rec = AudioRecorder(True, False)
     rec.start()
-    time.sleep(0.5)
+    assert wait_until(lambda: rec.tracks and rec.tracks[0].nbytes > 0)
     rec.request_stop()
     tracks = rec.finish()
     assert tracks
@@ -293,7 +304,7 @@ def test_silent_microphone_is_reported_after_the_recording(fake):
     fake.mic.level = 0.0                                   # permission denied on macOS looks exactly like this
     rec = AudioRecorder(False, True)
     rec.start()
-    time.sleep(0.5)
+    assert wait_until(lambda: rec.tracks and rec.tracks[0].nbytes > 0)
     rec.request_stop()
     tracks = rec.finish()
     assert tracks and any("sessiz" in w for w in rec.end_warnings)

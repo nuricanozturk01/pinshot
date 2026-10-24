@@ -138,8 +138,12 @@ class OcrWindow(QWidget):
         self.worker.finished.connect(lambda w=self.worker: _workers.discard(w))
         self.worker.done.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
-        self.worker.start(QThread.Priority.LowPriority)   # keep the UI and other apps responsive
+        # Normal priority on purpose: macOS throttles low-priority (background QoS) threads so hard that OCR can take
+        # minutes. The engine already uses only a few threads, so the machine stays responsive.
+        self.worker.start()
         self.show()
+        self.raise_()                        # a menu-bar (agent) app on macOS does not come to the front by itself
+        self.activateWindow()
 
     def _on_done(self, text: str) -> None:
         schedule_unload()
