@@ -185,12 +185,6 @@ runs each build once (`--selftest`). Then it creates the release page with the f
 Settings and logs are stored in a `PinShot/` folder in your user directory. On Linux, the settings file is
 `~/.config/PinShot/config.json` and the logs are in `~/.local/share/PinShot/logs`.
 
-## Credits
-
-The idea comes from desktop screenshot tools like PixPin. The code was written independently. The interface uses
-[Qt](https://www.qt.io/) (PySide6), OCR uses [RapidOCR](https://github.com/RapidAI/RapidOCR) and ONNX Runtime, and global
-shortcuts use [pynput](https://github.com/moses-palmer/pynput).
-
 ## Third-party software
 
 Video recording runs [FFmpeg](https://ffmpeg.org/) as a separate program, taken from the
