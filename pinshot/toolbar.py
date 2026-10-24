@@ -159,7 +159,7 @@ class Toolbar(QFrame):
             b.clicked.connect(lambda _=False, n=n: self.action.emit(n))
             row.addWidget(b)
         row.addWidget(_sep())
-        for n, tip in (("pin", "Ekrana sabitle (F3)"), ("ocr", "Metni tanı – OCR (O)"),
+        for n, tip in (("pin", "Ekrana sabitle (F3 / Ctrl+P)"), ("ocr", "Metni tanı – OCR (O)"),
                        ("record", "Bu alanı video olarak kaydet (MP4 / GIF)"), ("save", "Kaydet… (Ctrl+S)")):
             b = _btn(n, tip)
             b.clicked.connect(lambda _=False, n=n: self.action.emit(n))

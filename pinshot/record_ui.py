@@ -86,6 +86,7 @@ class RecordOptions(QWidget):
              "MP4": (("Boyut: 1280", 1280), ("Boyut: 1920", 1920), ("Boyut: 2560", 2560), ("Boyut: orijinal", 0))}
     DEFAULT_MIC = "Varsayılan mikrofon"
     settings_launched = Signal(object)        # Popen handle (or None): the owner hides its always-on-top windows
+    _perm_answered = Signal()                 # macOS permission prompt was answered (emitted from another thread)
 
     def __init__(self, cfg: Config):
         super().__init__()
@@ -146,7 +147,8 @@ class RecordOptions(QWidget):
         for w in self.findChildren(QWidget):
             w.setFocusPolicy(Qt.FocusPolicy.NoFocus)         # keep keyboard focus on the overlay (Esc / Enter)
         self.fmt.currentTextChanged.connect(self._format_changed)
-        self.mic_cb.toggled.connect(lambda _: self._sync_audio())
+        self.mic_cb.toggled.connect(self._mic_toggled)
+        self._perm_answered.connect(self.reload_audio)
         self._fill_fps(self.fmt.currentText())
         self._fill_size(self.fmt.currentText())
         self._sync_audio()
@@ -175,6 +177,13 @@ class RecordOptions(QWidget):
     def _format_changed(self, text: str) -> None:
         self._fill_fps(text)
         self._fill_size(text)
+        self._sync_audio()
+
+    def _mic_toggled(self, on: bool) -> None:
+        if on and sys.platform == "darwin":
+            from . import macperm
+            if macperm.mic_status() == "not_determined":        # show the system prompt now, while the UI stays responsive
+                macperm.request_mic(lambda granted: self._perm_answered.emit())
         self._sync_audio()
 
     def _open_sound_settings(self) -> None:

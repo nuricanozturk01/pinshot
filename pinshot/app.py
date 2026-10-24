@@ -118,6 +118,15 @@ class App:
                     "Tray menüsünü veya 'pinshot --capture' komutunu kullanın.")
 
     def reload_hotkeys(self) -> None:
+        if sys.platform == "darwin":
+            from . import macperm
+            if macperm.input_monitoring_ok(request=True) is False or macperm.accessibility_ok() is False:
+                # macOS gives no error: without these permissions the shortcuts simply never fire
+                self.notify(macperm.SHORTCUTS_TEXT)
+                if self.cfg["mac_permission_help_shown"] is False:
+                    self.cfg["mac_permission_help_shown"] = True
+                    self.cfg.save()
+                    macperm.open_pane(macperm.INPUT_URL)
         self.hotkeys.start({self.cfg[k]: a for k, a in HOTKEY_ACTIONS.items()})
 
     # ------------------------------------------------------------ actions

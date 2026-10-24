@@ -54,6 +54,34 @@ pip install -e .
 python -m pinshot
 ```
 
+## macOS permissions guide
+
+macOS asks you to approve each feature once. If something does not work, a permission is almost always missing. macOS does
+**not** show an error; the feature just does nothing (shortcuts never fire, screenshots are empty, recordings have no sound).
+
+Open **System Settings → Privacy & Security** and switch **PinShot** on in these lists:
+
+| Permission | What it is needed for | If it is missing |
+|---|---|---|
+| **Screen Recording** | Screenshots and screen recording | Empty or desktop-only images |
+| **Input Monitoring** | The global shortcuts | Shortcuts do nothing |
+| **Accessibility** | The global shortcuts | Shortcuts do nothing |
+| **Microphone** | Recording your voice | The recording has no microphone |
+
+Steps:
+
+1. Start PinShot. macOS may show a prompt for some permissions; click **Allow**.
+2. For the others, open the list yourself: **Privacy & Security** → pick the permission → click `+` (or the switch) and
+   add **PinShot**. PinShot also opens the right page for you when it notices a missing permission.
+3. **Quit and start PinShot again.** macOS only applies new permissions to programs that start afterwards.
+
+Good to know:
+
+- Because the app is not notarized by Apple, the first launch needs a right-click → *Open*.
+- If a permission is already switched on but still does not work (this can happen after you install an update), select
+  PinShot in the list, remove it with `−`, add it again, and restart PinShot.
+- System sound is not available on macOS without a virtual device such as BlackHole.
+
 ## Start it
 
 PinShot runs in the system tray and uses almost no CPU while it waits.
@@ -70,11 +98,14 @@ You can change these in the settings.
 
 | Action | Windows / Linux | macOS |
 |---|---|---|
-| Capture an area | `Ctrl+Alt+A` | `Control+Option+A` |
-| Capture the monitor under the cursor | `Ctrl+Alt+F` | `Control+Option+F` |
-| Capture the last area again | `Ctrl+Alt+R` | `Control+Option+R` |
-| Start / stop recording | `Ctrl+Alt+V` | `Control+Option+V` |
-| Pin the clipboard | `F3` | `F3` |
+| Capture an area | `Ctrl+Alt+A` | `Control+Shift+A` |
+| Capture the monitor under the cursor | `Ctrl+Alt+F` | `Control+Shift+F` |
+| Capture the last area again | `Ctrl+Alt+R` | `Control+Shift+R` |
+| Start / stop recording | `Ctrl+Alt+V` | `Control+Shift+V` |
+| Pin the clipboard | `F3` | `Control+Shift+P` |
+
+macOS uses different keys because `Option` changes the letter you type (`Option+A` gives "å"), so shortcuts built on it
+cannot work, and `F3` belongs to Mission Control. Shortcuts only work after you grant the permissions below.
 
 On macOS, `Ctrl` in the editor shortcuts below means `⌘ Command`.
 
@@ -88,7 +119,7 @@ On macOS, `Ctrl` in the editor shortcuts below means `⌘ Command`.
 |---|---|
 | `Enter` or double-click | Copy to the clipboard |
 | `Ctrl+S` | Save to a file |
-| `F3` | Pin to the screen |
+| `F3` or `Ctrl+P` | Pin to the screen |
 | `O` | Read the text (OCR) |
 | `Ctrl+A` | Select the whole monitor under the cursor |
 | `V R E L A P H T N M B` | Select, rectangle, ellipse, line, arrow, pen, highlighter, text, number, mosaic, blur |

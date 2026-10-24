@@ -448,6 +448,8 @@ class Recorder(QObject):
 
         def work() -> None:
             tracks = audio.finish() if audio else None
+            for w in (audio.end_warnings if audio else []):       # e.g. the microphone only delivered silence
+                self.warning.emit(w)
             ok, err = enc.finish(tracks, t0)
             if tracks:
                 from .audio import AudioRecorder

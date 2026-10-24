@@ -446,3 +446,33 @@ def test_pointer_position_outside_window_uses_real_cursor(overlay, monkeypatch):
     far = QPointF(o.width() + 900, o.height() + 700)                              # pointer is on another monitor
     monkeypatch.setattr(ov.QCursor, "pos", staticmethod(lambda: QPoint(3904, 1120)))
     assert o._gp(Ev(far)) == QPointF(3904, 1120)
+
+
+def test_macos_default_shortcuts_avoid_option_and_f3():
+    """Option+A types "å" on macOS, so the shortcut library never sees "a"; F3 is Mission Control."""
+    from pinshot.config import default_hotkeys
+    mac = default_hotkeys("darwin")
+    assert all("<alt>" not in v and v != "<f3>" for v in mac.values())
+    assert len(set(mac.values())) == len(mac)                              # no duplicates
+    assert default_hotkeys("linux")["hotkey_capture"] == "<ctrl>+<alt>+a"
+    assert default_hotkeys("win32")["hotkey_pin"] == "<f3>"
+
+
+def test_old_macos_config_gets_the_new_shortcuts(tmp_path, monkeypatch):
+    import json
+    import pinshot.config as cfgmod
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"hotkey_capture": "<ctrl>+<alt>+a", "hotkey_pin": "<f3>", "color": "#00ff00"}))
+    monkeypatch.setattr(cfgmod.sys, "platform", "darwin")
+    monkeypatch.setattr(cfgmod, "DEFAULTS", {**cfgmod.DEFAULTS, **cfgmod.default_hotkeys("darwin")})
+    c = cfgmod.Config(str(path))
+    assert c["hotkey_capture"] == "<ctrl>+<shift>+a" and c["hotkey_pin"] == "<ctrl>+<shift>+p"
+    assert c["color"] == "#00ff00"                                          # other settings are kept
+
+
+def test_shortcut_permission_checks_are_harmless_off_macos():
+    import pinshot.macperm as mp
+    import sys as _sys
+    if _sys.platform != "darwin":
+        assert mp.input_monitoring_ok() is None and mp.accessibility_ok() is None
+        assert mp.shortcuts_permitted() is True

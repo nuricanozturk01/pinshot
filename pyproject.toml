@@ -9,6 +9,7 @@ dependencies = [
   "PySide6-Essentials>=6.6,<7",
   "pynput>=1.7.6",
   "numpy>=1.24",
+  "pyobjc-framework-AVFoundation>=9; sys_platform == 'darwin'",   # macOS microphone permission
   "soundcard>=0.4.3",             # microphone + system-sound capture (WASAPI loopback / PulseAudio monitor)
   # offline OCR; no onnxruntime wheels for Windows on ARM
   "rapidocr_onnxruntime>=1.3.24; (sys_platform != 'win32' or platform_machine != 'ARM64')",

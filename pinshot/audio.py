@@ -27,6 +27,7 @@ class Track:
     started: float = 0.0          # time.monotonic() when the device opened
     error: str = ""
     nbytes: int = 0
+    peak: int = 0                 # loudest sample seen (0..32767): 0 means pure silence
 
 
 def _platform() -> str:
@@ -90,6 +91,10 @@ def _probe_now() -> dict:
     try:
         mics = [m for m in sc.all_microphones(include_loopback=True) if not getattr(m, "isloopback", False)]
         res["mic"] = (True, "") if mics else (False, _mic_hint())
+        if mics and _platform() == "darwin":
+            from . import macperm
+            if macperm.mic_status() in ("denied", "restricted"):
+                res["mic"] = (False, macperm.DENIED_TEXT)
     except Exception as ex:  # noqa: BLE001
         res["mic"] = (False, f"Mikrofon açılamadı ({type(ex).__name__}).")
     try:
@@ -104,6 +109,17 @@ def _probe_now() -> dict:
     return res
 
 
+def open_privacy_settings() -> bool:
+    """macOS: open Privacy & Security → Microphone."""
+    import subprocess
+    from .macperm import PRIVACY_URL
+    try:
+        subprocess.Popen(["open", PRIVACY_URL])
+        return True
+    except OSError:
+        return False
+
+
 def open_sound_settings():
     """Open the OS sound settings. Returns the Popen handle (Linux), True (opened, no handle) or False."""
     import shutil
@@ -113,6 +129,9 @@ def open_sound_settings():
             os.startfile("ms-settings:sound")          # type: ignore[attr-defined]
             return True
         if _platform() == "darwin":
+            from . import macperm
+            if macperm.mic_status() in ("denied", "restricted"):       # the sound pane would not help: it is a privacy setting
+                return open_privacy_settings()
             subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.sound"])
             return True
         for cmd in (["pavucontrol", "--tab=4"], ["gnome-control-center", "sound"], ["mate-volume-control"],
@@ -185,7 +204,8 @@ class AudioRecorder:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._files: dict[str, object] = {}
-        self.warnings: list[str] = []
+        self.warnings: list[str] = []          # found while opening the devices
+        self.end_warnings: list[str] = []      # found when the recording ended (no data / pure silence)
 
     def start(self) -> list[str]:
         """Open the devices (waits briefly so start times are known). Returns warnings for sources that failed."""
@@ -213,6 +233,14 @@ class AudioRecorder:
         try:
             import numpy as np
             import soundcard as sc  # type: ignore
+            if kind == "mic" and _platform() == "darwin":
+                from . import macperm
+                status = macperm.mic_status()
+                if status in ("denied", "restricted"):
+                    raise RuntimeError(macperm.DENIED_TEXT)
+                if status == "not_determined":                 # the prompt is (re)shown; do not record silence meanwhile
+                    macperm.request_mic()
+                    raise RuntimeError("Mikrofon izni bekleniyor. İzin verdikten sonra yeniden kaydedin.")
             f = open(track.path, "wb")
             with self._lock:
                 self._files[track.path] = f
@@ -241,6 +269,7 @@ class AudioRecorder:
                                     return
                                 f.write(pcm)
                                 track.nbytes += len(pcm)
+                                track.peak = max(track.peak, int(np.abs(data).max() * 32767))
                             if kind == "system" and time.monotonic() - last_check > 1.0:
                                 last_check = time.monotonic()
                                 if self._default_output_id(sc) != opened_for:
@@ -294,6 +323,14 @@ class AudioRecorder:
                 except OSError:
                     pass
         good = [t for t in self.tracks if not t.error and t.nbytes > 0]
+        for t in self.tracks:
+            if t.error:
+                continue
+            if t.nbytes == 0:
+                tail = " Mikrofon izni verildi mi?" if t.label == "Mikrofon" else ""
+                self.end_warnings.append(f"{t.label}: cihazdan hiç ses verisi gelmedi.{tail}")
+            elif t.peak == 0 and t.label == "Mikrofon":
+                self.end_warnings.append("Mikrofon tamamen sessiz kaydedildi: yanlış cihaz seçili ya da izin verilmemiş olabilir.")
         self.discard([t for t in self.tracks if t not in good])
         return good
 

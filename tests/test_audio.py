@@ -221,3 +221,96 @@ def test_windows_loopback_is_matched_by_the_speaker_id(fake, monkeypatch):
     monkeypatch.setattr(fake, "all_microphones", lambda include_loopback=False: [fake.mic, other, loop])
     monkeypatch.setattr(fake, "default_speaker", lambda: types.SimpleNamespace(id=fake.sink, name="Speakers (Realtek)"))
     assert audio._loopback_source(fake) is loop
+
+
+# ---------------------------------------------------------------- macOS microphone permission
+def _fake_avfoundation(monkeypatch, status):
+    import types as t
+    av = t.ModuleType("AVFoundation")
+    av.AVMediaTypeAudio = "soun"
+    calls = {"requested": 0}
+
+    class Dev:
+        @staticmethod
+        def authorizationStatusForMediaType_(_):
+            return status["v"]
+
+        @staticmethod
+        def requestAccessForMediaType_completionHandler_(_, handler):
+            calls["requested"] += 1
+            handler(True)
+    av.AVCaptureDevice = Dev
+    monkeypatch.setitem(sys.modules, "AVFoundation", av)
+    return calls
+
+
+def test_macperm_maps_status_codes(monkeypatch):
+    import pinshot.macperm as mp
+    monkeypatch.setattr(mp.sys, "platform", "darwin")
+    status = {"v": 0}
+    _fake_avfoundation(monkeypatch, status)
+    for code, name in ((0, "not_determined"), (1, "restricted"), (2, "denied"), (3, "authorized")):
+        status["v"] = code
+        assert mp.mic_status() == name
+
+
+def test_macperm_unknown_when_not_macos():
+    import pinshot.macperm as mp
+    if sys.platform != "darwin":
+        assert mp.mic_status() == "unknown"
+        assert mp.request_mic() is False
+
+
+def test_denied_microphone_permission_is_explained_not_silently_ignored(fake, monkeypatch):
+    import pinshot.audio as audio
+    import pinshot.macperm as mp
+    monkeypatch.setattr(audio, "_platform", lambda: "darwin")
+    monkeypatch.setattr(mp, "mic_status", lambda: "denied")
+    assert audio.probe.__wrapped__ if hasattr(audio.probe, "__wrapped__") else True
+    monkeypatch.delenv("PINSHOT_NO_AUDIO", raising=False)
+    res = audio.probe()
+    assert res["mic"][0] is False and "Gizlilik" in res["mic"][1]
+    rec = AudioRecorder(False, True)
+    warnings = rec.start()
+    assert warnings and "izni" in warnings[0]
+    rec.finish()
+
+
+def test_first_use_triggers_the_permission_prompt_instead_of_recording_silence(fake, monkeypatch):
+    import pinshot.audio as audio
+    import pinshot.macperm as mp
+    monkeypatch.setattr(audio, "_platform", lambda: "darwin")
+    monkeypatch.setattr(mp, "mic_status", lambda: "not_determined")
+    asked = []
+    monkeypatch.setattr(mp, "request_mic", lambda on_done=None: asked.append(1) or True)
+    rec = AudioRecorder(False, True)
+    warnings = rec.start()
+    assert asked and warnings and "bekleniyor" in warnings[0]
+    rec.finish()
+
+
+def test_silent_microphone_is_reported_after_the_recording(fake):
+    fake.mic.level = 0.0                                   # permission denied on macOS looks exactly like this
+    rec = AudioRecorder(False, True)
+    rec.start()
+    time.sleep(0.5)
+    rec.request_stop()
+    tracks = rec.finish()
+    assert tracks and any("sessiz" in w for w in rec.end_warnings)
+    AudioRecorder.discard(tracks)
+
+
+def test_microphone_that_never_delivers_data_is_reported(fake):
+    class Mute(FakeRecorder):
+        def record(self, numframes):
+            time.sleep(60)                                 # like soundcard's record() waiting forever
+
+    fake.mic.recorder = lambda samplerate, channels, blocksize: Mute(fake.mic, channels, fake.log)
+    rec = AudioRecorder(False, True)
+    rec.start()
+    time.sleep(0.3)
+    t = time.time()
+    rec.request_stop()
+    tracks = rec.finish()
+    assert time.time() - t < 6, "stopping must not wait for a blocked device"
+    assert not tracks and any("hiç ses verisi" in w for w in rec.end_warnings)

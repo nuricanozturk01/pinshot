@@ -806,7 +806,7 @@ class Overlay(QWidget):
             self.save()
         elif k in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.delete_selected()
-        elif k == Qt.Key.Key_F3:
+        elif k == Qt.Key.Key_F3 or (ctrl and k == Qt.Key.Key_P):         # F3 is Mission Control on macOS
             self.pin()
         elif k in arrows:
             step = 10 if shift else 1

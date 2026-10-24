@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from typing import Any
 
@@ -11,16 +12,26 @@ from PySide6.QtCore import QStandardPaths
 
 log = logging.getLogger(__name__)
 
+def default_hotkeys(platform: str | None = None) -> dict[str, str]:
+    """macOS: Option turns the key into another character ("Option+A" types "å"), so the global-hotkey library never
+    sees an "a" and the shortcut never fires; F3 is Mission Control. Use Control+Shift there."""
+    if (platform or sys.platform) == "darwin":
+        return {"hotkey_capture": "<ctrl>+<shift>+a", "hotkey_fullscreen": "<ctrl>+<shift>+f",
+                "hotkey_repeat": "<ctrl>+<shift>+r", "hotkey_record": "<ctrl>+<shift>+v",
+                "hotkey_pin": "<ctrl>+<shift>+p"}
+    return {"hotkey_capture": "<ctrl>+<alt>+a", "hotkey_fullscreen": "<ctrl>+<alt>+f",
+            "hotkey_repeat": "<ctrl>+<alt>+r", "hotkey_record": "<ctrl>+<alt>+v", "hotkey_pin": "<f3>"}
+
+
+CONFIG_VERSION = 2          # 2: macOS default shortcuts changed (see default_hotkeys)
+
 DEFAULTS: dict[str, Any] = {
+    "config_version": CONFIG_VERSION,
     "save_dir": "",                          # "" -> ~/Pictures/PinShot
     "format": "png",                         # png | jpg | webp
     "quality": 92,
     "auto_save": False,                      # save every capture to save_dir
-    "hotkey_capture": "<ctrl>+<alt>+a",
-    "hotkey_fullscreen": "<ctrl>+<alt>+f",
-    "hotkey_repeat": "<ctrl>+<alt>+r",
-    "hotkey_pin": "<f3>",
-    "hotkey_record": "<ctrl>+<alt>+v",
+    **default_hotkeys(),
     "record_format": "mp4",                  # mp4 | gif
     "record_fps": 30,                        # MP4 frame rate
     "record_fps_gif": 15,                    # GIF frame rate (files grow quickly with fps)
@@ -38,6 +49,7 @@ DEFAULTS: dict[str, Any] = {
     "font_px": 28,
     "pin_border": True,
     "autostart": False,
+    "mac_permission_help_shown": False,     # open the privacy pane for the shortcuts only once
     "last_region": None,                     # [screen_name, x, y, w, h] logical
 }
 
@@ -67,7 +79,10 @@ class Config:
             with open(self.path, encoding="utf-8") as f:
                 stored = json.load(f)
             if isinstance(stored, dict):
-                self.data.update({k: v for k, v in stored.items() if k in DEFAULTS})
+                if sys.platform == "darwin" and int(stored.get("config_version", 1)) < 2:
+                    # old macOS builds saved Option-based shortcuts that never worked: drop them so the new defaults apply
+                    stored = {k: v for k, v in stored.items() if not k.startswith("hotkey_")}
+                self.data.update({k: v for k, v in stored.items() if k in DEFAULTS and k != "config_version"})
         except FileNotFoundError:
             pass
         except (OSError, ValueError) as ex:
