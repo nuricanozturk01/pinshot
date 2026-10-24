@@ -8,11 +8,34 @@ Branch `rust`. The Python edition on `master` stays the released product until t
 - One small native binary per platform.
 - Same features, same settings file, same shortcuts.
 
+## Status (where we stopped)
+
+Working and tested on Linux/X11 (3 monitors): capture overlays with annotations, toolbar, pins + context menu,
+OCR (pure-Rust tract, PP-OCRv4), screen recording (MP4/GIF, system sound verified with PulseAudio/PipeWire),
+tray (ksni), global hotkeys, single instance + CLI, toasts, English/Turkish UI (system language by default).
+
+Written but **not run on real hardware** (CI compiles them): Windows capture/audio (GDI, cpal), macOS capture/audio
+(CoreGraphics, avfoundation, audiotap helper), tray-icon on Windows/macOS.
+
+### Next steps
+1. Settings window: `form.rs` + `settings.rs` are done and tested; still to do: the window itself (events, shortcut
+   capture from winit keys, folder picker via rfd, autostart via `auto-launch`, apply → reload hotkeys/language).
+2. About window (version, author link, log folder).
+3. Custom colour picker popup (toolbar "+" button currently only logs).
+4. Fix known flake: the very first mouse press/release after the overlay opens is sometimes not delivered when input
+   is synthesised with XTest (`crates/app/examples/xdrive.rs`); the editor already recovers from a lost release.
+5. macOS permission helper (screen recording, input monitoring, microphone) and Wayland portal capture.
+6. Self-test (`--selftest`), packaging (deb/dmg/exe + bundled ffmpeg), release workflow, replace the Python build.
+7. Idle memory: ~126 MB RSS idle in release; investigate (fonts, ksni/zbus, embedded models are mapped lazily).
+8. Run `cargo clippy --workspace --all-targets -- -D warnings` and fix the warnings of the new crates.
+
 ## Architecture
 
 | Layer | Crate / library | Status |
 |---|---|---|
-| Logic that needs no window system: geometry, colour, annotation model, hit testing, undo/redo, software rendering (tiny-skia), text (fontdue + embedded Noto Sans), multi-monitor composition, config, shortcut strings, image saving | `crates/core` | **done, 44 tests** |
+| Logic without a window system: geometry, annotations, editor state machine, undo/redo, rendering (tiny-skia), text, composition, config, shortcuts, i18n, pin geometry | `crates/core` | **done** |
+| OCR (PP-OCRv4 via tract) | `crates/ocr` | **done** |
+| Recording (ffmpeg pipeline, audio) | `crates/record` | **done** |
 | Widget kit drawn in software (buttons, sliders, toolbar) | `crates/ui` (winit + softbuffer) | planned |
 | Screens, hotkeys, tray, clipboard, dialogs, autostart, single instance | `crates/platform` | planned |
 | OCR (PP-OCR ONNX models through `ort`) | `crates/ocr` | planned |

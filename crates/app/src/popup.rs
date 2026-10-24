@@ -6,7 +6,7 @@ use crate::ui::Canvas;
 use pinshot_core::{Point, Rect};
 use std::sync::Arc;
 use tiny_skia::Pixmap;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::PhysicalPosition;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId, WindowLevel};
 
@@ -52,8 +52,8 @@ impl MenuWin {
             .with_title("PinShot")
             .with_decorations(false)
             .with_resizable(false)
-            .with_inner_size(PhysicalSize::new(pw as u32, ph as u32))
-            .with_position(PhysicalPosition::new(x as i32, y as i32))
+            .with_inner_size(crate::gfx::size_px(pw, ph, sf))
+            .with_position(crate::gfx::win_pos(x, y))
             .with_window_level(WindowLevel::AlwaysOnTop);
         #[cfg(target_os = "linux")]
         let attrs = {
@@ -155,16 +155,11 @@ impl Popup {
                 self.stack.truncate(level + 1);
                 let w = &mut self.stack[level];
                 w.open_sub = Some(r);
-                let base =
-                    w.sw.window
-                        .outer_position()
-                        .map(|p| Point::new(p.x as f32, p.y as f32))
-                        .unwrap_or_default();
+                let base = crate::gfx::outer_rect(&w.sw.window);
                 let rect = w.rows[r];
-                let at = Point::new(
-                    base.x + (w.size.0 - 4.0) * w.sf,
-                    base.y + rect.y * w.sf - 5.0,
-                );
+                // desktop units per logical UI unit
+                let u = if cfg!(target_os = "macos") { 1.0 } else { w.sf };
+                let at = Point::new(base.x + (w.size.0 - 4.0) * u, base.y + rect.y * u - 5.0);
                 let sf = w.sf;
                 if let Ok(child) = MenuWin::create(el, ctx, items, at, sf, bounds) {
                     self.stack.push(child);

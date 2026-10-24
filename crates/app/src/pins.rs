@@ -5,7 +5,6 @@ use pinshot_core::pin::{self, Transform};
 use pinshot_core::{Point, Rect};
 use std::sync::Arc;
 use tiny_skia::{FilterQuality, Pixmap, PixmapPaint};
-use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowLevel};
 
@@ -49,8 +48,8 @@ impl PinWin {
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(true)
-            .with_inner_size(PhysicalSize::new(w as u32, h as u32))
-            .with_position(PhysicalPosition::new(at.x as i32, at.y as i32))
+            .with_inner_size(crate::gfx::size_units(w, h))
+            .with_position(crate::gfx::win_pos(at.x, at.y))
             .with_window_level(WindowLevel::AlwaysOnTop);
         #[cfg(target_os = "linux")]
         let attrs = {
@@ -89,8 +88,8 @@ impl PinWin {
     pub fn set_geom(&mut self, g: Rect) {
         self.geom = g;
         let w = &self.sw.window;
-        let _ = w.request_inner_size(PhysicalSize::new(g.w as u32, g.h as u32));
-        w.set_outer_position(PhysicalPosition::new(g.x as i32, g.y as i32));
+        let _ = w.request_inner_size(crate::gfx::size_units(g.w, g.h));
+        w.set_outer_position(crate::gfx::win_pos(g.x, g.y));
         self.cache = None;
         w.request_redraw();
     }

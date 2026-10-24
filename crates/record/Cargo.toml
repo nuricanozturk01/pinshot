@@ -1,0 +1,13 @@
+[package]
+name = "pinshot-record"
+description = "Screen recording: ffmpeg encoding pipeline and audio capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+cpal = "0.15"

@@ -2,6 +2,8 @@
 
 use crate::clip::Clip;
 use crate::gfx::{Context, IRect, SoftWindow};
+mod rec;
+
 use crate::ocrwin::{Btn, OcrWin};
 use crate::pins::PinWin;
 use crate::popup::{Outcome, Popup};
@@ -28,16 +30,17 @@ use winit::keyboard::{Key as WKey, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId, WindowLevel};
 
 /// Things that happen outside the event loop's own window events.
-#[derive(Debug)]
 pub enum UserEvent {
     /// A command name such as `capture` (from the tray, a hotkey or the command line).
     Command(String),
     /// Start the capture now (after the delay that lets menus disappear).
-    CaptureNow,
+    CaptureNow(bool),
     SaveChosen(Option<PathBuf>),
     PinSaveChosen(u64, Option<PathBuf>),
     PinFilesChosen(Vec<PathBuf>),
     OcrDone(u64, Result<String, String>),
+    RecordNow(Box<rec::RecordRequest>),
+    Rec(pinshot_record::Event),
     Toast(String),
 }
 
@@ -51,6 +54,7 @@ enum Owner {
     Pin(u64),
     Menu,
     Ocr(u64),
+    Island,
 }
 
 struct OverlayWin {
@@ -83,6 +87,9 @@ pub struct App {
     next_pin: u64,
     popup: Option<Popup>,
     ocr_wins: Vec<OcrWin>,
+    recording: Option<rec::Recording>,
+    rec_finalizing: Option<u64>,
+    last_output: Option<PathBuf>,
     ocr_engine: Arc<std::sync::Mutex<Option<pinshot_ocr::Engine>>>,
     ocr_last_use: Option<Instant>,
     mods: ModifiersState,
@@ -111,6 +118,9 @@ impl App {
             next_pin: 1,
             popup: None,
             ocr_wins: Vec::new(),
+            recording: None,
+            rec_finalizing: None,
+            last_output: None,
             ocr_engine: Arc::new(std::sync::Mutex::new(None)),
             ocr_last_use: None,
             mods: ModifiersState::default(),
@@ -128,6 +138,11 @@ impl App {
 
     // ------------------------------------------------------------------ notifications
     fn toast(&mut self, el: &ActiveEventLoop, text: &str) {
+        self.toast_click(el, text, "");
+    }
+
+    /// A notification that runs `click` (a command name) when clicked; `""` = not clickable.
+    fn toast_click(&mut self, el: &ActiveEventLoop, text: &str, click: &'static str) {
         let Some(ctx) = self.ctx.as_ref() else { return };
         let mons = screens::monitors().unwrap_or_default();
         let at = screens::cursor_pos()
@@ -139,7 +154,16 @@ impl App {
             .find(|h| h.position().x == m.rect.x as i32 && h.position().y == m.rect.y as i32)
             .map(|h| h.scale_factor() as f32)
             .unwrap_or(1.0);
-        match Toast::show(el, ctx, text, m.rect, sf, 4) {
+        let secs = if click.is_empty() { 4 } else { 8 };
+        match Toast::show(
+            el,
+            ctx,
+            text,
+            m.rect,
+            sf,
+            secs,
+            (!click.is_empty()).then_some(click),
+        ) {
             Ok(t) => {
                 self.owners.insert(t.sw.window.id(), Owner::Toast);
                 self.toasts.push(t);
@@ -147,6 +171,19 @@ impl App {
             Err(e) => log::warn!("toast failed: {e}"),
         }
         log::info!("notify: {text}");
+    }
+
+    fn toast_clicked(&mut self, el: &ActiveEventLoop, id: WindowId) {
+        let click = self
+            .toasts
+            .iter()
+            .find(|t| t.sw.window.id() == id)
+            .and_then(|t| t.click);
+        if let Some(c) = click {
+            self.owners.remove(&id);
+            self.toasts.retain(|t| t.sw.window.id() != id);
+            self.command(el, c);
+        }
     }
 
     /// Scale factor and bounds of the monitor holding `p`.
@@ -216,10 +253,18 @@ impl App {
                 self.schedule_capture(secs * 1000);
             }
             "open_folder" => open_path(&self.cfg.save_dir_path()),
+            "record" => self.record_command(el),
+            "stop_record" => self.stop_recording(el),
+            "open_output" => {
+                if let Some(p) = self.last_output.as_ref().and_then(|p| p.parent()) {
+                    open_path(p);
+                }
+            }
             "pin_clipboard" => self.pin_clipboard(el),
             "pin_file" => self.pin_file_dialog(),
             "close_pins" => self.close_all_pins(),
             "quit" => {
+                self.cancel_recording();
                 self.save_cfg();
                 el.exit();
             }
@@ -229,13 +274,18 @@ impl App {
     }
 
     fn schedule_capture(&mut self, lag_ms: u64) {
+        self.schedule_capture_mode(lag_ms, false);
+    }
+
+    /// `rec`: open the overlay for recording (options panel instead of the toolbar).
+    fn schedule_capture_mode(&mut self, lag_ms: u64, rec: bool) {
         if self.overlay.is_some() {
             return;
         }
         let proxy = self.proxy.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(lag_ms));
-            let _ = proxy.send_event(UserEvent::CaptureNow);
+            let _ = proxy.send_event(UserEvent::CaptureNow(rec));
         });
     }
 
@@ -265,7 +315,7 @@ impl App {
         }
     }
 
-    fn capture_now(&mut self, el: &ActiveEventLoop) {
+    fn capture_now(&mut self, el: &ActiveEventLoop, rec: bool) {
         if self.overlay.is_some() {
             return;
         }
@@ -273,6 +323,11 @@ impl App {
         let Some(ctx) = self.ctx.as_ref() else { return };
         let color = Rgba::parse(&self.cfg.color).unwrap_or(Rgba::rgb(0xff, 0x3b, 0x30));
         let session = Session::new(caps, color, self.cfg.pen_width, self.cfg.font_px);
+        let mut session = session;
+        if rec {
+            session.rec = Some(self.make_panel(false));
+            session.rec_flow = true;
+        }
         let mut wins = Vec::new();
         let handles: Vec<_> = el.available_monitors().collect();
         for (i, cap) in session.caps.iter().enumerate() {
@@ -284,8 +339,8 @@ impl App {
                 .with_resizable(false)
                 .with_visible(false)
                 .with_window_level(WindowLevel::AlwaysOnTop)
-                .with_position(PhysicalPosition::new(r.x as i32, r.y as i32))
-                .with_inner_size(PhysicalSize::new(pw, ph));
+                .with_position(crate::gfx::win_pos(r.x, r.y))
+                .with_inner_size(crate::gfx::size_units(r.w, r.h));
             if !cfg!(target_os = "macos") {
                 let h = handles
                     .iter()
@@ -510,7 +565,22 @@ impl App {
         let ui = Point::new(pos.x as f32 / w.sf, pos.y as f32 / w.sf);
         let bar = ov.session.toolbar_origin(&g);
         let mut icon = None;
-        if ov.session.toolbar.is_dragging() {
+        let panel_hit = match (ov.session.panel_origin(&g), ov.session.rec.as_mut()) {
+            (Some(o), Some(p)) => {
+                let local = Point::new(ui.x - o.x, ui.y - o.y);
+                if p.contains(local) {
+                    p.set_hover(Some(local));
+                    true
+                } else {
+                    p.set_hover(None);
+                    false
+                }
+            }
+            _ => false,
+        };
+        if panel_hit {
+            icon = Some(CursorIcon::Default);
+        } else if ov.session.toolbar.is_dragging() {
             if let Some(o) = bar {
                 if let Some(ev) = ov.session.toolbar.drag(Point::new(ui.x - o.x, ui.y - o.y)) {
                     self.apply_toolbar_event(ev, None);
@@ -573,6 +643,24 @@ impl App {
                 .toolbar
                 .contains(Point::new(ui.x - o.x, ui.y - o.y))
         });
+        let panel_ev = match (ov.session.panel_origin(&g), ov.session.rec.as_mut()) {
+            (Some(o), Some(p)) if button == MouseButton::Left && state == ElementState::Pressed => {
+                let local = Point::new(ui.x - o.x, ui.y - o.y);
+                if p.contains(local) {
+                    Some(p.press(local))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(ev) = panel_ev {
+            if let Some(ev) = ev {
+                self.rec_panel_event(el, ev);
+            }
+            self.redraw_all();
+            return;
+        }
         let m = Fonts::embedded();
         let mut cmd = Cmd::None;
         log::debug!(
@@ -630,6 +718,7 @@ impl App {
         let m = Fonts::embedded();
         let ed = &mut ov.session.editor;
         let mut cmd = Cmd::None;
+        let mut open_rec = false;
         match ev {
             TbEvent::Tool(t) => ed.set_tool(t, m),
             TbEvent::Color(c) => {
@@ -658,12 +747,15 @@ impl App {
                 Act::Pin => cmd = Cmd::Pin,
                 Act::Ocr => cmd = Cmd::Ocr,
                 Act::Cancel => cmd = Cmd::Close,
-                Act::Record => log::info!("recording from the toolbar arrives with the recorder"),
+                Act::Record => open_rec = true,
             },
         }
         ov.session.sync_toolbar();
         if let Some(el) = el {
             self.run_cmd(el, cmd);
+            if open_rec {
+                self.open_rec_panel(el);
+            }
         }
     }
 
@@ -691,7 +783,21 @@ impl App {
         );
         let m = Fonts::embedded();
         let mut cmd = Cmd::None;
+        let recording_setup = ov.session.rec.is_some();
         for k in keys {
+            if recording_setup {
+                // only Escape, Enter, the arrow keys (move the area) and Ctrl+A mean anything while choosing
+                // recording options
+                match k {
+                    Key::Escape => return self.rec_cancel_redraw(),
+                    Key::Enter if ov.session.editor.sel.is_some() => {
+                        return self.rec_start_selected(el, false)
+                    }
+                    Key::Left | Key::Right | Key::Up | Key::Down => {}
+                    Key::Char('a') if mods.ctrl => {}
+                    _ => continue,
+                }
+            }
             let c = ov.session.editor.key(k, mods, m);
             if c != Cmd::None {
                 cmd = c;
@@ -699,6 +805,11 @@ impl App {
         }
         ov.session.sync_toolbar();
         self.run_cmd(el, cmd);
+        self.redraw_all();
+    }
+
+    fn rec_cancel_redraw(&mut self) {
+        self.rec_cancel();
         self.redraw_all();
     }
 
@@ -1110,7 +1221,7 @@ impl App {
                     let r = Rect::new(g.x - off.x, g.y - off.y, p.geom.w, p.geom.h);
                     p.geom = r;
                     p.sw.window
-                        .set_outer_position(PhysicalPosition::new(r.x as i32, r.y as i32));
+                        .set_outer_position(crate::gfx::win_pos(r.x, r.y));
                 } else {
                     let edge = pin::edge_at(p.pos, w as f32, h as f32);
                     p.sw.window.set_cursor(match edge.as_str() {
@@ -1281,16 +1392,9 @@ impl App {
         self.popup
             .as_ref()
             .map(|pop| {
-                pop.stack.iter().any(|w| {
-                    let (o, s) = (
-                        w.sw.window.outer_position().unwrap_or_default(),
-                        w.sw.window.outer_size(),
-                    );
-                    p.x >= o.x as f32
-                        && p.y >= o.y as f32
-                        && p.x < (o.x + s.width as i32) as f32
-                        && p.y < (o.y + s.height as i32) as f32
-                })
+                pop.stack
+                    .iter()
+                    .any(|w| crate::gfx::outer_rect(&w.sw.window).contains(p))
             })
             .unwrap_or(false)
     }
@@ -1364,10 +1468,15 @@ impl App {
     fn last_menu_pos(&self, level: usize) -> Option<PhysicalPosition<f64>> {
         let w = self.popup.as_ref()?.stack.get(level)?;
         let g = screens::cursor_pos()?;
-        let o = w.sw.window.outer_position().ok()?;
+        let o = crate::gfx::outer_rect(&w.sw.window);
+        let k = if cfg!(target_os = "macos") {
+            w.sw.window.scale_factor()
+        } else {
+            1.0
+        };
         Some(PhysicalPosition::new(
-            g.x as f64 - o.x as f64,
-            g.y as f64 - o.y as f64,
+            (g.x as f64 - o.x as f64) * k,
+            (g.y as f64 - o.y as f64) * k,
         ))
     }
 
@@ -1543,9 +1652,11 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, el: &ActiveEventLoop, ev: UserEvent) {
         match ev {
             UserEvent::Command(c) => self.command(el, &c),
-            UserEvent::CaptureNow => self.capture_now(el),
+            UserEvent::CaptureNow(rec) => self.capture_now(el, rec),
             UserEvent::SaveChosen(p) => self.save_chosen(el, p),
             UserEvent::OcrDone(id, r) => self.ocr_done(id, r),
+            UserEvent::RecordNow(req) => self.record_now(el, *req),
+            UserEvent::Rec(e) => self.rec_event(el, e),
             UserEvent::PinSaveChosen(id, p) => self.pin_save_chosen(el, id, p),
             UserEvent::PinFilesChosen(files) => self.pin_files_chosen(el, files),
             UserEvent::Toast(t) => self.toast(el, &t),
@@ -1561,7 +1672,17 @@ impl ApplicationHandler<UserEvent> for App {
             Owner::Pin(pid) => return self.pin_event(el, pid, event),
             Owner::Menu => return self.menu_event(el, id, event),
             Owner::Ocr(oid) => return self.ocr_event(el, oid, event),
-            Owner::Toast => return,
+            Owner::Island => return self.island_event(el, event),
+            Owner::Toast => {
+                if let WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                } = event
+                {
+                    self.toast_clicked(el, id);
+                }
+                return;
+            }
         };
         if !matches!(
             event,

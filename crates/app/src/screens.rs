@@ -124,24 +124,40 @@ mod imp {
     }
 
     pub fn grab(m: &Monitor) -> Result<Pixmap, String> {
-        let (c, n) = conn()?;
-        let root = c.setup().roots[n].root;
-        let (w, h) = (m.rect.w as u16, m.rect.h as u16);
-        let img = c
-            .get_image(
-                ImageFormat::Z_PIXMAP,
-                root,
-                m.rect.x as i16,
-                m.rect.y as i16,
-                w,
-                h,
-                !0,
-            )
-            .map_err(|e| e.to_string())?
-            .reply()
-            .map_err(|e| e.to_string())?;
-        pixmap_from_bgrx(w as u32, h as u32, w as usize * 4, &img.data)
-            .ok_or_else(|| "bad image".to_string())
+        grab_part(m, m.rect)
+    }
+
+    pub fn grab_part(m: &Monitor, part: Rect) -> Result<Pixmap, String> {
+        let (w, h, data) = grab_raw(m, part)?;
+        pixmap_from_bgrx(w, h, w as usize * 4, &data).ok_or_else(|| "bad image".to_string())
+    }
+
+    /// Grab `part` (desktop coordinates, inside the monitor) as tightly packed BGRX bytes, with no conversion. The
+    /// X11 connection is kept per thread, so grabbing frames for a recording is cheap.
+    pub fn grab_raw(_m: &Monitor, part: Rect) -> Result<(u32, u32, Vec<u8>), String> {
+        POINTER_CONN.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(conn()?);
+            }
+            let (c, n) = slot.as_ref().ok_or("no X11 connection")?;
+            let root = c.setup().roots[*n].root;
+            let (w, h) = (part.w as u16, part.h as u16);
+            let img = c
+                .get_image(
+                    ImageFormat::Z_PIXMAP,
+                    root,
+                    part.x as i16,
+                    part.y as i16,
+                    w,
+                    h,
+                    !0,
+                )
+                .map_err(|e| e.to_string())?
+                .reply()
+                .map_err(|e| e.to_string())?;
+            Ok((w as u32, h as u32, img.data))
+        })
     }
 
     thread_local! {
@@ -236,12 +252,16 @@ mod imp {
     }
 
     pub fn grab(m: &Monitor) -> Result<Pixmap, String> {
-        let (x, y, w, h) = (
-            m.rect.x as i32,
-            m.rect.y as i32,
-            m.rect.w as i32,
-            m.rect.h as i32,
-        );
+        grab_part(m, m.rect)
+    }
+
+    pub fn grab_part(m: &Monitor, part: Rect) -> Result<Pixmap, String> {
+        let (w, h, data) = grab_raw(m, part)?;
+        pixmap_from_bgrx(w, h, w as usize * 4, &data).ok_or_else(|| "bad image".to_string())
+    }
+
+    pub fn grab_raw(_m: &Monitor, part: Rect) -> Result<(u32, u32, Vec<u8>), String> {
+        let (x, y, w, h) = (part.x as i32, part.y as i32, part.w as i32, part.h as i32);
         unsafe {
             let screen = GetDC(None);
             let mem = CreateCompatibleDC(Some(screen));
@@ -272,8 +292,7 @@ mod imp {
             if ok.is_err() || lines == 0 {
                 return Err("screen capture failed".into());
             }
-            pixmap_from_bgrx(w as u32, h as u32, w as usize * 4, &buf)
-                .ok_or_else(|| "bad image".to_string())
+            Ok((w as u32, h as u32, buf))
         }
     }
 
@@ -336,17 +355,37 @@ mod imp {
     }
 
     pub fn grab(m: &Monitor) -> Result<Pixmap, String> {
+        grab_part(m, m.rect)
+    }
+
+    pub fn grab_part(m: &Monitor, part: Rect) -> Result<Pixmap, String> {
+        let (w, h, data) = grab_raw(m, part)?;
+        pixmap_from_bgrx(w, h, w as usize * 4, &data).ok_or_else(|| "bad image".to_string())
+    }
+
+    pub fn grab_raw(m: &Monitor, part: Rect) -> Result<(u32, u32, Vec<u8>), String> {
+        use core_graphics::geometry::{CGPoint, CGRect, CGSize};
         let id: u32 = m
             .name
             .trim_start_matches("display")
             .parse()
             .map_err(|_| "bad display".to_string())?;
+        // the rectangle is relative to the display, in points
+        let r = CGRect::new(
+            &CGPoint::new((part.x - m.rect.x) as f64, (part.y - m.rect.y) as f64),
+            &CGSize::new(part.w as f64, part.h as f64),
+        );
         let img = CGDisplay::new(id)
-            .image()
+            .image_for_rect(r)
             .ok_or("screen recording permission missing or capture failed")?;
         let (w, h, stride) = (img.width() as u32, img.height() as u32, img.bytes_per_row());
         let data = img.data();
-        pixmap_from_bgrx(w, h, stride, data.bytes()).ok_or_else(|| "bad image".to_string())
+        let src = data.bytes();
+        let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+        for y in 0..h as usize {
+            out.extend_from_slice(&src[y * stride..y * stride + w as usize * 4]);
+        }
+        Ok((w, h, out))
     }
 
     pub fn cursor_pos() -> Option<Point> {
@@ -387,7 +426,7 @@ pub fn screen_access(_request: bool) -> bool {
 
 #[cfg(target_os = "macos")]
 pub use imp::screen_access;
-pub use imp::{buttons_down, cursor_pos, grab, monitors};
+pub use imp::{buttons_down, cursor_pos, grab, grab_part, grab_raw, monitors};
 
 /// Grab every monitor.
 pub fn grab_all() -> Result<Vec<Capture>, String> {

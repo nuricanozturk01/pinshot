@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 pinshot-core = { path = "../core" }
 pinshot-ocr = { path = "../ocr" }
+pinshot-record = { path = "../record" }
 tiny-skia.workspace = true
 image.workspace = true
 serde_json.workspace = true
@@ -20,6 +21,7 @@ log.workspace = true
 directories.workspace = true
 winit = "0.30"
 softbuffer = "0.4"
+clipboard-rs = "0.3"
 arboard = { version = "3.7", default-features = false, features = ["image-data"] }
 global-hotkey = "0.9"
 rfd = "0.17"

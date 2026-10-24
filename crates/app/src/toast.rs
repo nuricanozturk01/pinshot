@@ -8,7 +8,6 @@ use pinshot_core::{Rect, Rgba};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tiny_skia::Pixmap;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowLevel};
 
@@ -17,6 +16,8 @@ const MAX_TEXT_W: f32 = 460.0;
 pub struct Toast {
     pub sw: SoftWindow,
     pub deadline: Instant,
+    /// Command to run when the toast is clicked.
+    pub click: Option<&'static str>,
 }
 
 /// Greedy word wrap using real glyph widths.
@@ -71,18 +72,24 @@ impl Toast {
         area: Rect,
         sf: f32,
         secs: u64,
+        click: Option<&'static str>,
     ) -> Result<Toast, String> {
         let pm = paint(text, sf);
         let (w, h) = (pm.width(), pm.height());
-        let pos = PhysicalPosition::new(
-            (area.right() - w as f32 - 24.0 * sf) as i32,
-            (area.bottom() - h as f32 - 64.0 * sf) as i32,
+        let u = if cfg!(target_os = "macos") {
+            1.0 / sf
+        } else {
+            1.0
+        }; // desktop units per pixel
+        let pos = crate::gfx::win_pos(
+            area.right() - (w as f32 + 24.0 * sf) * u,
+            area.bottom() - (h as f32 + 64.0 * sf) * u,
         );
         let attrs = Window::default_attributes()
             .with_title("PinShot")
             .with_decorations(false)
             .with_resizable(false)
-            .with_inner_size(PhysicalSize::new(w, h))
+            .with_inner_size(crate::gfx::size_px(w as f32, h as f32, sf))
             .with_position(pos)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_active(false);
@@ -92,13 +99,14 @@ impl Toast {
             attrs.with_x11_window_type(vec![WindowType::Notification])
         };
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
-        let _ = window.set_cursor_hittest(false);
+        let _ = window.set_cursor_hittest(click.is_some());
         let mut sw = SoftWindow::new(ctx, window)?;
         sw.sync_size();
         sw.present(&pm, (0, 0))?;
         Ok(Toast {
             sw,
             deadline: Instant::now() + Duration::from_secs(secs),
+            click,
         })
     }
 }

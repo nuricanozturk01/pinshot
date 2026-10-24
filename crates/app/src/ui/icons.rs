@@ -317,6 +317,19 @@ pub fn draw(cv: &mut Canvas, name: &str, r: Rect, color: Rgba) {
                 );
             }
         }
+        "refresh" => {
+            // three quarters of a circle with an arrow head
+            let mut pts = Vec::new();
+            for i in 0..=18 {
+                let a = (40.0 + i as f32 * 15.0).to_radians();
+                pts.push(12.0 + 7.0 * a.cos());
+                pts.push(12.0 - 7.0 * a.sin());
+            }
+            let arc = p.poly(&pts, false);
+            p.outline(arc);
+            let head = p.poly(&[17.0, 3.5, 17.5, 8.5, 12.5, 8.0], false);
+            p.outline(head);
+        }
         "stop" => {
             let s = p.rect(6.0, 6.0, 12.0, 12.0);
             p.solid(s, c);
@@ -358,6 +371,7 @@ mod tests {
             "select", "rect", "ellipse", "line", "arrow", "pen", "marker", "text", "number",
             "mosaic", "blur", "undo", "redo", "pin", "ocr", "save", "close", "check", "copy",
             "trash", "fill", "dash", "flipx", "record", "plus", "minus", "settings", "stop",
+            "refresh",
         ];
         for n in names {
             let mut pm = tiny_skia::Pixmap::new(48, 48).unwrap();

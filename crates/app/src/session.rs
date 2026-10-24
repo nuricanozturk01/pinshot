@@ -3,6 +3,7 @@
 //! by comparing pixels.
 
 use crate::gfx::IRect;
+use crate::recpanel::RecPanel;
 use crate::screens::Capture;
 use crate::toolbar::{self, Toolbar};
 use crate::ui::{theme, Canvas};
@@ -37,6 +38,10 @@ pub struct Session {
     pub tooltip: Option<(String, Rect)>,
     /// Set while a modal popup (record options, colour picker) is open above the toolbar.
     pub popup_open: bool,
+    /// Recording options (replaces the toolbar while recording is being set up).
+    pub rec: Option<RecPanel>,
+    /// The overlay was opened by the record command (cancelling closes it).
+    pub rec_flow: bool,
 }
 
 pub fn desktop_bounds(caps: &[Capture]) -> Rect {
@@ -56,6 +61,8 @@ impl Session {
             cursor: None,
             tooltip: None,
             popup_open: false,
+            rec: None,
+            rec_flow: false,
         };
         s.sync_toolbar();
         s
@@ -157,7 +164,8 @@ impl Session {
 
     /// Toolbar top-left in the host window's UI units, if the toolbar is visible there.
     pub fn toolbar_origin(&self, g: &Geom) -> Option<Point> {
-        if self.editor.sel.is_none()
+        if self.rec.is_some()
+            || self.editor.sel.is_none()
             || self.editor.is_selecting()
             || self.host() != Some(g.mon)
             || self.popup_open_hides_bar()
@@ -168,6 +176,24 @@ impl Session {
         let ui_sel = Rect::new(vis.x / g.sf, vis.y / g.sf, vis.w / g.sf, vis.h / g.sf);
         let area = Rect::new(0.0, 0.0, g.size.0 as f32 / g.sf, g.size.1 as f32 / g.sf);
         Some(toolbar::place(ui_sel, self.toolbar.size(), area))
+    }
+
+    /// Top-left of the recording panel in the window's UI units, if it is shown there.
+    pub fn panel_origin(&self, g: &Geom) -> Option<Point> {
+        let panel = self.rec.as_ref()?;
+        let (pw, ph) = panel.size();
+        let area = Rect::new(0.0, 0.0, g.size.0 as f32 / g.sf, g.size.1 as f32 / g.sf);
+        if self.editor.sel.is_some() {
+            if self.editor.is_selecting() || self.host() != Some(g.mon) {
+                return None;
+            }
+            let vis = self.sel_px(g.mon)?;
+            let ui_sel = Rect::new(vis.x / g.sf, vis.y / g.sf, vis.w / g.sf, vis.h / g.sf);
+            return Some(toolbar::place(ui_sel, (pw, ph), area));
+        }
+        // no selection yet: top centre of the monitor under the pointer
+        let at = self.cursor.and_then(|c| self.monitor_at(c)).unwrap_or(0);
+        (at == g.mon).then(|| Point::new((area.w - pw) / 2.0, 70.0))
     }
 
     fn popup_open_hides_bar(&self) -> bool {
@@ -203,6 +229,10 @@ impl Session {
         let full = IRect::new(0, 0, g.size.0, g.size.1);
         if let Some(s) = self.sel_px(g.mon) {
             add(IRect::around(s.x, s.y, s.w, s.h).inflate((44.0 * g.sf) as i32));
+        }
+        if let (Some(o), Some(p)) = (self.panel_origin(g), self.rec.as_ref()) {
+            let (w, h) = p.size();
+            add(IRect::around(o.x * g.sf, o.y * g.sf, w * g.sf, h * g.sf).inflate(4));
         }
         if let Some(o) = self.toolbar_origin(g) {
             let (w, h) = self.toolbar.size();
@@ -253,6 +283,9 @@ impl Session {
         }
         if self.editor.sel.is_none() || self.editor.mode == pinshot_core::editor::Mode::SelNew {
             self.draw_loupe(&mut cv, g);
+        }
+        if let (Some(o), Some(p)) = (self.panel_origin(g), self.rec.as_ref()) {
+            p.draw(&mut cv, o);
         }
         if let Some(o) = self.toolbar_origin(g) {
             self.toolbar.draw(&mut cv, o);

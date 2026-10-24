@@ -41,6 +41,19 @@ impl Clip {
             .map_err(|e| e.to_string())
     }
 
+    /// Put files on the clipboard (paste into a chat or an e-mail).
+    pub fn set_files(&mut self, paths: &[std::path::PathBuf]) -> Result<(), String> {
+        use clipboard_rs::Clipboard as _;
+        let ctx = clipboard_rs::ClipboardContext::new().map_err(|e| e.to_string())?;
+        ctx.set_files(
+            paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+        )
+        .map_err(|e| e.to_string())
+    }
+
     pub fn image(&mut self) -> Option<Pixmap> {
         let img = self.cb().ok()?.get_image().ok()?;
         pinshot_core::output::from_rgba8(img.width as u32, img.height as u32, &img.bytes)

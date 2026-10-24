@@ -7,7 +7,6 @@ use pinshot_core::text::Fonts;
 use pinshot_core::{Point, Rect, Rgba};
 use std::sync::Arc;
 use tiny_skia::Pixmap;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowLevel};
 
@@ -73,8 +72,8 @@ impl OcrWin {
         let attrs = Window::default_attributes()
             .with_title("PinShot – OCR")
             .with_resizable(false)
-            .with_inner_size(PhysicalSize::new((W * sf) as u32, (H * sf) as u32))
-            .with_position(PhysicalPosition::new(at.x as i32, at.y as i32))
+            .with_inner_size(crate::gfx::size_px(W * sf, H * sf, sf))
+            .with_position(crate::gfx::win_pos(at.x, at.y))
             .with_window_level(WindowLevel::AlwaysOnTop);
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         let sf = window.scale_factor() as f32;
