@@ -19,6 +19,8 @@ import time
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QImage, QPainter, QPen, QRegion, QScreen
 
+from .capture import plain
+
 log = logging.getLogger(__name__)
 GIF_MAX_FPS = 50              # GIF stores delays in 1/100 s and browsers slow down anything under 20 ms
 DEFAULT_WIDTH = {"gif": 1920, "mp4": 0}      # max output width in px (0 = original); ffmpeg does the scaling
@@ -364,15 +366,16 @@ class Recorder(QObject):
         if len(self._parts) == 1 and self._parts[0][1] == r:        # common case: one monitor, one grab
             sc = self._parts[0][0]
             g = sc.geometry()
-            return sc.grabWindow(0, r.x() - g.x(), r.y() - g.y(), r.width(), r.height()).toImage() \
-                .convertToFormat(QImage.Format.Format_RGB32)
+            return plain(sc.grabWindow(0, r.x() - g.x(), r.y() - g.y(), r.width(), r.height()).toImage()
+                         .convertToFormat(QImage.Format.Format_RGB32))
         scale = max((sc.devicePixelRatio() for sc, _ in self._parts), default=1.0)   # stitch the monitors together
         out = QImage(max(1, round(r.width() * scale)), max(1, round(r.height() * scale)), QImage.Format.Format_RGB32)
         out.fill(0)
         p = QPainter(out)
         for sc, inter in self._parts:
             g = sc.geometry()
-            img = sc.grabWindow(0, inter.x() - g.x(), inter.y() - g.y(), inter.width(), inter.height()).toImage()
+            img = plain(sc.grabWindow(0, inter.x() - g.x(), inter.y() - g.y(), inter.width(), inter.height())
+                        .toImage())
             dx, dy = round((inter.x() - r.x()) * scale), round((inter.y() - r.y()) * scale)
             if abs(sc.devicePixelRatio() - scale) < 1e-6:
                 p.drawImage(dx, dy, img)

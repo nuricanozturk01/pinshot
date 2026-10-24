@@ -25,6 +25,17 @@ class Capture:
     scale: float         # physical / logical
 
 
+def plain(img: QImage) -> QImage:
+    """The same pixels with devicePixelRatio 1 (shares the data, no copy).
+
+    On a Retina Mac, Qt tags grabbed images with ratio 2 and QPainter then works in half-size logical units: copying or
+    drawing such an image collapses it into a quarter of the target. All capture code works in plain device pixels and
+    tracks the scale factor itself, so the tag is removed at the source."""
+    out = QImage(img)
+    out.setDevicePixelRatio(1.0)
+    return out
+
+
 def looks_blank(img: QImage) -> bool:
     """True when the grab is a single flat colour (permission denied / Wayland returns black)."""
     if img.isNull():
@@ -57,7 +68,7 @@ def mac_screen_access(request: bool = True) -> bool:
 def _from_pixmaps() -> list[Capture]:
     out = []
     for s in QGuiApplication.screens():
-        img = s.grabWindow(0).toImage().convertToFormat(QImage.Format.Format_RGB32)
+        img = plain(s.grabWindow(0).toImage().convertToFormat(QImage.Format.Format_RGB32))
         g = s.geometry()
         scale = img.width() / g.width() if g.width() else s.devicePixelRatio()
         out.append(Capture(s, img, g, scale))
@@ -187,13 +198,14 @@ def compose_region(caps: list[Capture], rect) -> QImage:
     p = QPainter(out)
     p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
     for c, inter in parts:
+        image = plain(c.image)                                   # ignore a devicePixelRatio tag on the input
         src = QRect(round((inter.x() - c.geometry.x()) * c.scale), round((inter.y() - c.geometry.y()) * c.scale),
                     max(1, round(inter.width() * c.scale)), max(1, round(inter.height() * c.scale)))
         dx, dy = round((inter.x() - rect.x()) * scale), round((inter.y() - rect.y()) * scale)
         if abs(c.scale - scale) < 1e-6:                    # same scale: exact copy, no resampling blur
-            p.drawImage(dx, dy, c.image, src.x(), src.y(), src.width(), src.height())
+            p.drawImage(dx, dy, image, src.x(), src.y(), src.width(), src.height())
         else:
             p.drawImage(QRect(dx, dy, max(1, round(inter.width() * scale)), max(1, round(inter.height() * scale))),
-                        c.image, src)
+                        image, src)
     p.end()
     return out
