@@ -1,6 +1,7 @@
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("PINSHOT_NO_AUDIO", "1")       # never enumerate real audio devices in tests (can hang on CI)
 
 import pytest
 from PySide6.QtCore import QPointF, Qt

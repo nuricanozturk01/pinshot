@@ -36,3 +36,4 @@ version = { attr = "pinshot.__version__" }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+faulthandler_timeout = 120        # a hung test prints every thread's stack instead of freezing silently

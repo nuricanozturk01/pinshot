@@ -68,8 +68,10 @@ class FakeSC(types.ModuleType):
 
 @pytest.fixture
 def fake(monkeypatch):
+    import pinshot.audio as audio
     sc = FakeSC()
     monkeypatch.setitem(sys.modules, "soundcard", sc)
+    monkeypatch.setattr(audio, "_platform", lambda: "linux")      # the fake behaves like PulseAudio on every runner
     return sc
 
 
@@ -167,3 +169,55 @@ def test_system_sound_unavailable_when_only_microphones_exist(fake):
     from pinshot.audio import _loopback_source
     fake.monitors = {}
     assert _loopback_source(fake) is None
+
+
+def test_device_scan_never_blocks_the_caller(monkeypatch):
+    """A hanging audio backend (CoreAudio on a CI Mac, stuck PulseAudio) must not freeze the UI or the tests."""
+    import pinshot.audio as audio
+    monkeypatch.delenv("PINSHOT_NO_AUDIO", raising=False)
+    monkeypatch.setattr(audio, "SCAN_TIMEOUT", 0.5)
+
+    class Hang(types.ModuleType):
+        def all_microphones(self, include_loopback=False):
+            time.sleep(30)
+
+        def default_speaker(self):
+            time.sleep(30)
+
+    monkeypatch.setitem(sys.modules, "soundcard", Hang("soundcard"))
+    t = time.time()
+    res = audio.probe()
+    names = audio.list_microphones()
+    assert time.time() - t < 3, "the scan must give up quickly"
+    assert res["mic"][0] is False and res["system"][0] is False and "zaman aşımı" in res["mic"][1]
+    assert names == []
+
+
+def test_audio_can_be_switched_off_by_environment(monkeypatch):
+    import pinshot.audio as audio
+    monkeypatch.setenv("PINSHOT_NO_AUDIO", "1")
+    assert audio.probe()["mic"][0] is False and audio.list_microphones() == []
+
+
+def test_macos_system_sound_needs_a_virtual_device(fake, monkeypatch):
+    """macOS has no built-in loopback: only a known virtual device (BlackHole, ...) counts as system sound."""
+    import pinshot.audio as audio
+    monkeypatch.setattr(audio, "_platform", lambda: "darwin")
+    assert audio._loopback_source(fake) is None
+    hole = FakeDevice("bh", "BlackHole 2ch", 0.2)
+    hole.log = fake.log
+    monkeypatch.setattr(fake, "all_microphones", lambda include_loopback=False: [fake.mic, hole])
+    assert audio._loopback_source(fake) is hole
+
+
+def test_windows_loopback_is_matched_by_the_speaker_id(fake, monkeypatch):
+    import pinshot.audio as audio
+    monkeypatch.setattr(audio, "_platform", lambda: "win32")
+    fake.sink = "{0.0.0.00000000}.{abc}"
+    loop = FakeDevice("{0.0.0.00000000}.{abc}", "Speakers (Realtek)", 0.3, True)    # WASAPI loopback shares the id
+    loop.log = fake.log
+    other = FakeDevice("{0.0.1.00000000}.{def}", "Speakers (Realtek)", 0.9, True)    # same name, another device
+    other.log = fake.log
+    monkeypatch.setattr(fake, "all_microphones", lambda include_loopback=False: [fake.mic, other, loop])
+    monkeypatch.setattr(fake, "default_speaker", lambda: types.SimpleNamespace(id=fake.sink, name="Speakers (Realtek)"))
+    assert audio._loopback_source(fake) is loop

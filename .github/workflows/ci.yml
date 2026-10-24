@@ -12,6 +12,7 @@ jobs:
   test:
     name: Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25          # a hang must fail fast, not wait for the 6-hour default
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +41,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
       - name: Test
-        run: python -m pytest -q
+        timeout-minutes: 15
+        # -v shows which test is running; a test stuck for 120 s dumps every thread's stack (faulthandler_timeout)
+        run: python -m pytest -v
       - name: Headless self-test (source tree)
+        timeout-minutes: 5
         run: python -m pinshot --selftest "$PWD/selftest.txt" && cat selftest.txt && grep -q "RESULT OK" selftest.txt

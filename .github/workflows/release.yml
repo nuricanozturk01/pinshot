@@ -87,6 +87,7 @@ jobs:
 
       - name: Self-test built app (Linux / macOS)
         if: runner.os != 'Windows'
+        timeout-minutes: 5
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then BIN="dist/PinShot.app/Contents/MacOS/PinShot"; else BIN="dist/PinShot/PinShot"; fi
           "$BIN" --selftest "$PWD/selftest.txt" || true
@@ -95,6 +96,7 @@ jobs:
 
       - name: Self-test built app (Windows)
         if: runner.os == 'Windows'
+        timeout-minutes: 5
         shell: pwsh
         run: |
           $p = Start-Process -FilePath "dist\PinShot\PinShot.exe" -ArgumentList "--selftest","$PWD\selftest.txt" -Wait -PassThru

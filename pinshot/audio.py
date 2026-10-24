@@ -29,18 +29,58 @@ class Track:
     nbytes: int = 0
 
 
+def _platform() -> str:
+    """_platform(), behind a function so tests can pin the platform (the macOS/Windows/Linux paths differ)."""
+    return sys.platform
+
+
+def _with_timeout(fn, seconds: float, fallback):
+    """Run `fn` in a helper thread and give up after `seconds`.
+
+    Enumerating audio devices can block for a very long time (CoreAudio on a machine without audio hardware, a stuck
+    PulseAudio, a COM call on Windows). The UI and the tests must never wait on that."""
+    box: list = []
+
+    def work() -> None:
+        try:
+            box.append(fn())
+        except Exception as ex:  # noqa: BLE001
+            log.warning("audio scan failed: %s", ex)
+
+    th = threading.Thread(target=work, name="pinshot-audio-scan", daemon=True)
+    th.start()
+    th.join(seconds)
+    return box[0] if box else fallback
+
+
+def audio_disabled() -> bool:
+    return bool(os.environ.get("PINSHOT_NO_AUDIO"))          # CI / machines where scanning audio devices hangs
+
+
 def _mic_hint() -> str:
-    if sys.platform == "win32":
+    if _platform() == "win32":
         return ("Mikrofon bulunamadı. Ayarlar → Sistem → Ses → Giriş bölümünden bir mikrofon etkinleştirin ve "
                 "Gizlilik → Mikrofon iznini verin.")
-    if sys.platform == "darwin":
+    if _platform() == "darwin":
         return "Mikrofon bulunamadı. Sistem Ayarları → Ses → Giriş bölümünden bir mikrofon seçin."
     return ("Mikrofon bulunamadı. Ses ayarlarında ses kartının giriş (mikrofon) profilini açın; Bluetooth kulaklıkta "
             "'Hands-free (HFP)' profilini seçin. Sonra Yenile'ye basın.")
 
 
+SCAN_TIMEOUT = 3.0
+
+
 def probe() -> dict:
-    """What can be recorded right now: {'system': (ok, reason), 'mic': (ok, reason)}. Not cached: devices come and go."""
+    """What can be recorded right now: {'system': (ok, reason), 'mic': (ok, reason)}. Not cached: devices come and go.
+    Never blocks longer than SCAN_TIMEOUT."""
+    if audio_disabled():
+        why = "Ses devre dışı."
+        return {"system": (False, why), "mic": (False, why)}
+    why = "Ses cihazları taranamadı (zaman aşımı). Yenile'ye basın."
+    return _with_timeout(_probe_now, SCAN_TIMEOUT, {"system": (False, why), "mic": (False, why)})
+
+
+def _probe_now() -> dict:
     res = {"system": (False, ""), "mic": (False, "")}
     try:
         import soundcard as sc  # type: ignore
@@ -55,7 +95,7 @@ def probe() -> dict:
     try:
         if _loopback_source(sc) is not None:
             res["system"] = (True, "")
-        elif sys.platform == "darwin":
+        elif _platform() == "darwin":
             res["system"] = (False, "macOS sistem sesi için sanal bir ses cihazı gerekir (ör. BlackHole).")
         else:
             res["system"] = (False, "Sistem sesi kaynağı bulunamadı.")
@@ -69,10 +109,10 @@ def open_sound_settings():
     import shutil
     import subprocess
     try:
-        if sys.platform == "win32":
+        if _platform() == "win32":
             os.startfile("ms-settings:sound")          # type: ignore[attr-defined]
             return True
-        if sys.platform == "darwin":
+        if _platform() == "darwin":
             subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.sound"])
             return True
         for cmd in (["pavucontrol", "--tab=4"], ["gnome-control-center", "sound"], ["mate-volume-control"],
@@ -90,7 +130,7 @@ def _loopback_source(sc):
     Never use `get_microphone(speaker.name, include_loopback=True)`: it matches by *name*, and a Bluetooth headset in
     Hands-free mode calls both its microphone and its output "<headset name>", so it returned the microphone and the
     "system sound" was silent. Choose among real loopback sources, by id first."""
-    if sys.platform == "darwin":       # no native loopback: accept a known virtual device
+    if _platform() == "darwin":       # no native loopback: accept a known virtual device
         for m in sc.all_microphones():
             if any(k in m.name.lower() for k in ("blackhole", "loopback", "soundflower")):
                 return m
@@ -109,12 +149,14 @@ def _loopback_source(sc):
 
 
 def list_microphones() -> list[str]:
-    """Names of real input devices (loopback/monitor sources excluded)."""
-    try:
+    """Names of real input devices (loopback/monitor sources excluded). Never blocks longer than SCAN_TIMEOUT."""
+    if audio_disabled():
+        return []
+
+    def scan() -> list[str]:
         import soundcard as sc  # type: ignore
         return [m.name for m in sc.all_microphones(include_loopback=True) if not getattr(m, "isloopback", False)]
-    except Exception:  # noqa: BLE001
-        return []
+    return _with_timeout(scan, SCAN_TIMEOUT, [])
 
 
 def _mic_source(sc, name: str = ""):
