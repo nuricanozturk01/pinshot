@@ -39,7 +39,7 @@ Download the file for your system from [Releases](../../releases).
 | macOS, Intel | `…-macos-amd64.dmg` |
 | Linux (x64 / ARM64) | `…-linux-amd64.deb`, `…-linux-arm64.deb` or `.tar.gz` |
 
-Windows on ARM is experimental. Check your download with `SHA256SUMS.txt`.
+Check your download with `SHA256SUMS.txt`.
 
 **macOS** – the app is not notarized by Apple. Right-click it and choose *Open* the first time. Then allow
 *Screen Recording* (and *Accessibility* for shortcuts, *Microphone* for sound) in System Settings → Privacy & Security.
@@ -173,7 +173,7 @@ pinshot --capture | --fullscreen | --repeat | --record | --stop-recording | --pi
 - No scrolling screenshots and no automatic window selection.
 - The interface is in Turkish only for now.
 - Wayland: screenshots work through the desktop portal, but global shortcuts and screen recording do not.
-- Windows on ARM has no OCR and no bundled ffmpeg.
+- No Windows on ARM build for now.
 - With monitors at different scale factors, a selection that crosses the gap between them can include a black strip.
 
 ## Development

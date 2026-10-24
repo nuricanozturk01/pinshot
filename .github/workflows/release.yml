@@ -35,7 +35,8 @@ jobs:
           - { name: "Linux amd64",   runner: ubuntu-22.04,    arch: amd64, experimental: false }
           - { name: "Linux arm64",   runner: ubuntu-24.04-arm, arch: arm64, experimental: false }
           - { name: "Windows amd64", runner: windows-latest,  arch: amd64, experimental: false }
-          - { name: "Windows arm64", runner: windows-11-arm,  arch: arm64, experimental: true }
+          # Windows arm64 is switched off for now; uncomment to build it again (experimental):
+          # - { name: "Windows arm64", runner: windows-11-arm,  arch: arm64, experimental: true }
           - { name: "macOS arm64",   runner: macos-15,        arch: arm64, experimental: false }
           - { name: "macOS amd64",   runner: macos-15-intel,  arch: amd64, experimental: false }
     defaults:
@@ -163,7 +164,7 @@ jobs:
             ## Downloads
             | Platform | amd64 / x64 | arm64 |
             |---|---|---|
-            | Windows | `*-windows-amd64-setup.exe` (installer) or `.zip` (portable) | `*-windows-arm64-*` (experimental) |
+            | Windows | `*-windows-amd64-setup.exe` (installer) or `.zip` (portable) | not available for now |
             | macOS | `*-macos-amd64.dmg` (Intel) | `*-macos-arm64.dmg` (Apple Silicon) |
             | Linux | `*-linux-amd64.deb` / `.tar.gz` | `*-linux-arm64.deb` / `.tar.gz` |
 
