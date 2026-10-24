@@ -13,8 +13,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-build = ["pyinstaller>=6.10", "pillow>=10"]
-test = ["pytest>=8", "pillow>=10"]
+build = ["pyinstaller>=6.10", "pillow>=10.1"]
+test = ["pytest>=8", "pillow>=10.1"]
 
 [project.scripts]
 pinshot = "pinshot.app:main"

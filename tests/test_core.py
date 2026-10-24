@@ -179,14 +179,10 @@ def test_pin_text_and_clipboard(qapp):
 
 def test_ocr_reads_text(qapp):
     pytest.importorskip("rapidocr_onnxruntime")
-    from PySide6.QtGui import QFont
     from pinshot.ocr import recognize
-    img = QImage(500, 120, QImage.Format.Format_RGB32)
-    img.fill(QColor("white"))
-    p = QPainter(img)
-    f = QFont()
-    f.setPixelSize(44)
-    p.setFont(f)
-    p.drawText(20, 80, "Hello PinShot")
-    p.end()
-    assert "PinShot" in recognize(img).replace(" ", "") or "Hello" in recognize(img)
+    from pinshot.selftest import make_text_image
+    img = make_text_image()
+    text = recognize(img).replace(" ", "").lower()
+    if not ("pinshot" in text or "hello" in text):
+        from pinshot.selftest import ocr_diagnostics
+        pytest.fail(f"OCR returned {text!r} for a {img.width()}x{img.height()} image\n{ocr_diagnostics(img)}")

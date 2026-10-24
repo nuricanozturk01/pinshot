@@ -10,6 +10,70 @@ import tempfile
 import traceback
 
 
+def make_text_image(text: str = "Hello PinShot", size: int = 46):
+    """White image with black text drawn by Pillow's bundled font (independent of system / Qt fonts)."""
+    from PIL import Image, ImageDraw, ImageFont
+    from PySide6.QtGui import QImage
+    font = ImageFont.load_default(size=size)
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    l, t, r, b = probe.textbbox((0, 0), text, font=font)
+    im = Image.new("RGB", (r - l + 60, b - t + 60), "white")
+    ImageDraw.Draw(im).text((30 - l, 30 - t), text, fill="black", font=font)
+    qi = QImage(im.tobytes(), im.width, im.height, im.width * 3, QImage.Format.Format_RGB888)
+    return qi.copy()
+
+
+def ocr_diagnostics(img) -> str:
+    """Raw engine behaviour for several input variants; only used to explain a failing OCR check."""
+    out: list[str] = []
+
+    def step(name: str, fn) -> None:
+        try:
+            out.append(f"  {name}: {fn()}")
+        except Exception as ex:  # noqa: BLE001
+            out.append(f"  {name}: EXC {type(ex).__name__}: {ex}")
+
+    import io
+    import numpy as np
+    from .ocr import _to_array
+    arr = _to_array(img)
+    from rapidocr_onnxruntime import RapidOCR
+    eng = RapidOCR()
+
+    def mod(name: str) -> str:
+        import importlib
+        m = importlib.import_module(name)
+        return getattr(m, "__version__", "?")
+
+    for n in ("cv2", "onnxruntime", "numpy", "shapely", "pyclipper", "PIL"):
+        step(f"version {n}", lambda n=n: mod(n))
+    step("onnx providers", lambda: __import__("onnxruntime").get_available_providers())
+    step("array", lambda: f"{arr.shape} {arr.dtype} min={arr.min()} max={arr.max()} dark={(arr < 128).sum()} "
+                          f"contiguous={arr.flags['C_CONTIGUOUS']}")
+    step("ndarray", lambda: eng(arr)[0])
+    step("ndarray det-only", lambda: eng(arr, use_det=True, use_cls=False, use_rec=False)[0])
+    step("ndarray x2", lambda: eng(np.ascontiguousarray(np.kron(arr, np.ones((2, 2, 1), dtype=np.uint8))))[0])
+    step("bgr", lambda: eng(np.ascontiguousarray(arr[:, :, ::-1]))[0])
+
+    def from_png():
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.fromarray(arr).save(buf, "PNG")
+        return eng(buf.getvalue())[0]
+    step("png bytes", from_png)
+
+    def from_file():
+        import tempfile, os
+        from PIL import Image
+        f = os.path.join(tempfile.gettempdir(), "pinshot-ocr-diag.png")
+        Image.fromarray(arr).save(f)
+        return eng(f)[0]
+    step("png file", from_file)
+    step("model dir", lambda: sorted(__import__("os").listdir(__import__("os").path.join(
+        __import__("os").path.dirname(__import__("rapidocr_onnxruntime").__file__), "models"))))
+    return "\n".join(out)
+
+
 def run(outfile: str | None) -> int:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     lines: list[str] = []
@@ -77,16 +141,10 @@ def run(outfile: str | None) -> int:
                 return "skipped (no onnxruntime wheels for Windows ARM64)"
             raise                                   # a missing engine anywhere else is a packaging bug
         from .ocr import recognize
-        img = QImage(520, 120, QImage.Format.Format_RGB32)
-        img.fill(QColor("white"))
-        p = QPainter(img)
-        f = QFont()
-        f.setPixelSize(46)
-        p.setFont(f)
-        p.drawText(20, 80, "Hello PinShot")
-        p.end()
+        img = make_text_image()
         text = recognize(img).replace(" ", "").lower()
-        assert "pinshot" in text or "hello" in text, f"unexpected OCR output: {text!r}"
+        if not ("pinshot" in text or "hello" in text):
+            raise AssertionError(f"unexpected OCR output: {text!r}\nDIAGNOSTICS:\n{ocr_diagnostics(img)}")
         return "ocr"
 
     def hotkeys() -> str:
