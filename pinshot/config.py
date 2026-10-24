@@ -20,6 +20,11 @@ DEFAULTS: dict[str, Any] = {
     "hotkey_fullscreen": "<ctrl>+<alt>+f",
     "hotkey_repeat": "<ctrl>+<alt>+r",
     "hotkey_pin": "<f3>",
+    "hotkey_record": "<ctrl>+<alt>+v",
+    "record_format": "mp4",                  # mp4 | gif
+    "record_fps": 15,
+    "record_max_seconds": 600,               # hard stop: protects disk and CPU from a forgotten recording
+    "record_cursor": True,
     "color": "#ff3b30",
     "pen_width": 3,
     "font_px": 28,

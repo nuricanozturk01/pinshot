@@ -9,7 +9,7 @@ sys.path.insert(0, ROOT)
 from pinshot import __version__  # noqa: E402
 
 datas, binaries, hiddenimports = [], [], []
-for pkg in ("rapidocr_onnxruntime", "onnxruntime"):      # offline OCR: models + native libs
+for pkg in ("rapidocr_onnxruntime", "onnxruntime", "imageio_ffmpeg"):   # OCR models + native libs, ffmpeg binary
     try:
         d, b, h = collect_all(pkg)
         datas += d

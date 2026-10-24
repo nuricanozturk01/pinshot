@@ -10,6 +10,8 @@ dependencies = [
   "pynput>=1.7.6",
   # offline OCR; no onnxruntime wheels for Windows on ARM
   "rapidocr_onnxruntime>=1.3.24; (sys_platform != 'win32' or platform_machine != 'ARM64')",
+  # bundled ffmpeg for MP4/GIF recording; no wheel for Windows on ARM (a system ffmpeg is used there)
+  "imageio-ffmpeg>=0.5.1; (sys_platform != 'win32' or platform_machine != 'ARM64')",
 ]
 
 [project.optional-dependencies]

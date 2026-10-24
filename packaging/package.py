@@ -46,6 +46,14 @@ def windows(arch: str) -> None:
 def macos(arch: str) -> None:
     app = os.path.join(DIST, "PinShot.app")
     # Ad-hoc sign (required for arm64 to launch). Not notarised: first launch needs right-click > Open.
+    # Sign the bundled ffmpeg first: an unsigned executable is killed on Apple Silicon.
+    for dp, _, fns in os.walk(app):
+        for fn in fns:
+            if fn.startswith("ffmpeg-"):
+                path = os.path.join(dp, fn)
+                if not os.path.islink(path):
+                    os.chmod(path, 0o755)
+                    run("codesign", "--force", "--sign", "-", path)
     run("codesign", "--force", "--deep", "--sign", "-", app)
     stage = os.path.join(ROOT, "build", "dmg")
     shutil.rmtree(stage, ignore_errors=True)

@@ -12,7 +12,8 @@ from .config import DEFAULTS, Config
 from .hotkeys import pynput_to_qt, qt_to_pynput
 
 HOTKEY_FIELDS = [("hotkey_capture", "Bölge yakala"), ("hotkey_fullscreen", "Tam ekran yakala"),
-                 ("hotkey_repeat", "Son bölgeyi tekrarla"), ("hotkey_pin", "Panodan sabitle")]
+                 ("hotkey_repeat", "Son bölgeyi tekrarla"), ("hotkey_pin", "Panodan sabitle"),
+                 ("hotkey_record", "Ekran kaydını başlat / durdur")]
 
 
 class SettingsDialog(QDialog):
@@ -43,6 +44,23 @@ class SettingsDialog(QDialog):
         self.auto = QCheckBox("Her yakalamayı otomatik klasöre kaydet")
         f.addRow(self.auto)
         root.addWidget(box)
+
+        rec = QGroupBox("Video kaydı")
+        rf = QFormLayout(rec)
+        self.rec_fmt = QComboBox()
+        self.rec_fmt.addItems(["mp4", "gif"])
+        self.rec_fps = QComboBox()
+        for v in (10, 15, 24, 30):
+            self.rec_fps.addItem(f"{v} fps", v)
+        self.rec_max = QSpinBox()
+        self.rec_max.setRange(1, 180)
+        self.rec_max.setSuffix(" dk")
+        self.rec_cursor = QCheckBox("Fare imlecini göster")
+        rf.addRow("Varsayılan biçim", self.rec_fmt)
+        rf.addRow("Kare hızı", self.rec_fps)
+        rf.addRow("En uzun kayıt", self.rec_max)
+        rf.addRow(self.rec_cursor)
+        root.addWidget(rec)
 
         keys = QGroupBox("Kısayollar")
         kf = QFormLayout(keys)
@@ -82,6 +100,11 @@ class SettingsDialog(QDialog):
         self.fmt.setCurrentText(d["format"])
         self.quality.setValue(int(d["quality"]))
         self.auto.setChecked(bool(d["auto_save"]))
+        self.rec_fmt.setCurrentText(d["record_format"])
+        i = self.rec_fps.findData(int(d["record_fps"]))
+        self.rec_fps.setCurrentIndex(i if i >= 0 else 1)
+        self.rec_max.setValue(max(1, int(d["record_max_seconds"]) // 60))
+        self.rec_cursor.setChecked(bool(d["record_cursor"]))
         for k, e in self.keys.items():
             e.setKeySequence(QKeySequence(pynput_to_qt(d[k])))
         self.start.setChecked(bool(d["autostart"]))
@@ -98,6 +121,10 @@ class SettingsDialog(QDialog):
         c["format"] = self.fmt.currentText()
         c["quality"] = self.quality.value()
         c["auto_save"] = self.auto.isChecked()
+        c["record_format"] = self.rec_fmt.currentText()
+        c["record_fps"] = self.rec_fps.currentData()
+        c["record_max_seconds"] = self.rec_max.value() * 60
+        c["record_cursor"] = self.rec_cursor.isChecked()
         seen: set[str] = set()
         for k, e in self.keys.items():
             v = qt_to_pynput(e.keySequence().toString(QKeySequence.SequenceFormat.PortableText))

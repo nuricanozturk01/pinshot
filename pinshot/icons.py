@@ -160,3 +160,16 @@ def app_pixmap(size: int = 256) -> QPixmap:
     p.drawEllipse(QPointF(50, 50), 9, 9)
     p.end()
     return pm
+
+
+def recording_icon(size: int = 256) -> QIcon:
+    """App icon with a red recording dot, shown in the tray while a recording runs."""
+    pm = app_pixmap(size)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QPen(QColor("white"), size * 0.04))
+    p.setBrush(QColor("#ff3b30"))
+    r = size * 0.19
+    p.drawEllipse(QPointF(size * 0.74, size * 0.26), r, r)
+    p.end()
+    return QIcon(pm)

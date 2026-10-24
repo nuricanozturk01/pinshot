@@ -731,13 +731,14 @@ class Overlay(QWidget):
         run_ocr(img, pos)
 
     def closeEvent(self, e) -> None:
+        self.cap.image = QImage()          # release the full-resolution screenshot immediately
         self.closed.emit()
         super().closeEvent(e)
 
 
-def start_overlays(caps: list[Capture], cfg: Config, done_cb=lambda msg: None) -> list[Overlay]:
+def start_overlays(caps: list[Capture], cfg: Config, done_cb=lambda msg: None, factory=None) -> list:
     """One frameless overlay per screen; the first one the user starts on wins, the rest close."""
-    overlays = [Overlay(c, cfg) for c in caps]
+    overlays = [(factory or Overlay)(c, cfg) for c in caps]
 
     def keep_only(active: Overlay) -> None:
         for o in [x for x in overlays if x is not active]:

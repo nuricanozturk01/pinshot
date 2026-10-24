@@ -4,14 +4,17 @@ from __future__ import annotations
 import logging
 import threading
 
-from PySide6.QtCore import QPoint, QThread, Qt, Signal
+from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QImage
+from .memory import release_memory
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 log = logging.getLogger(__name__)
 _engine = None
 _lock = threading.Lock()
 _workers: set = set()
+_unload_timer: QTimer | None = None
+UNLOAD_AFTER_MS = 60_000       # free the ~100 MB engine when OCR has not been used for a minute
 
 
 class OcrUnavailable(RuntimeError):
@@ -26,6 +29,44 @@ def _to_array(img: QImage):
     return buf[:, : w * 3].reshape(h, w, 3).copy()
 
 
+def _make_engine():
+    """RapidOCR limited to a few threads: OCR must not saturate every core of the machine."""
+    import os
+    import tempfile
+    from rapidocr_onnxruntime import RapidOCR  # type: ignore
+    try:
+        from rapidocr_onnxruntime.main import DEFAULT_CFG_PATH
+        threads = max(1, min(4, (os.cpu_count() or 2) // 2))
+        with open(DEFAULT_CFG_PATH, encoding="utf-8") as f:
+            text = f.read()
+        text = text.replace("intra_op_num_threads: &intra_nums -1", f"intra_op_num_threads: &intra_nums {threads}")
+        text = text.replace("inter_op_num_threads: &inter_nums -1", "inter_op_num_threads: &inter_nums 1")
+        path = os.path.join(tempfile.gettempdir(), f"pinshot-rapidocr-{threads}.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return RapidOCR(config_path=path)
+    except Exception:  # noqa: BLE001  (config layout changed: the default engine still works)
+        log.warning("could not apply OCR thread limit", exc_info=True)
+        return RapidOCR()
+
+
+def unload_engine() -> None:
+    global _engine
+    with _lock:
+        _engine = None
+    release_memory()
+
+
+def schedule_unload() -> None:
+    """Main thread only: (re)start the idle timer that drops the engine."""
+    global _unload_timer
+    if _unload_timer is None:
+        _unload_timer = QTimer()
+        _unload_timer.setSingleShot(True)
+        _unload_timer.timeout.connect(unload_engine)
+    _unload_timer.start(UNLOAD_AFTER_MS)
+
+
 def recognize(img: QImage) -> str:
     """Blocking OCR; call from a worker thread."""
     global _engine
@@ -33,8 +74,7 @@ def recognize(img: QImage) -> str:
         arr = _to_array(img)
         with _lock:
             if _engine is None:
-                from rapidocr_onnxruntime import RapidOCR  # type: ignore
-                _engine = RapidOCR()
+                _engine = _make_engine()
             result, _ = _engine(arr)
         return "\n".join(r[1] for r in (result or []))
     except ImportError:
@@ -98,10 +138,11 @@ class OcrWindow(QWidget):
         self.worker.finished.connect(lambda w=self.worker: _workers.discard(w))
         self.worker.done.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
-        self.worker.start()
+        self.worker.start(QThread.Priority.LowPriority)   # keep the UI and other apps responsive
         self.show()
 
     def _on_done(self, text: str) -> None:
+        schedule_unload()
         self.edit.setReadOnly(False)
         if text.strip():
             self.edit.setPlainText(text)
@@ -111,6 +152,7 @@ class OcrWindow(QWidget):
             self.status.setText("Metin bulunamadı.")
 
     def _on_failed(self, msg: str) -> None:
+        schedule_unload()
         self.status.setText("OCR başarısız")
         self.edit.setPlainText(msg)
 

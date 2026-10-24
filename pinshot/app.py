@@ -8,24 +8,26 @@ import signal
 import sys
 import traceback
 
-from PySide6.QtCore import QCoreApplication, QPoint, QTimer, QUrl
+from PySide6.QtCore import QCoreApplication, QMimeData, QPoint, QTimer, QUrl
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QGuiApplication, QImage
 from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME, __version__, output, pin
-from .capture import Capture, grab_screens, looks_blank, mac_screen_access, screen_under_cursor
 from .config import Config, log_dir
 from .hotkeys import HotkeyManager
-from .icons import app_icon
+from .icons import app_icon, recording_icon
 from .ipc import CommandServer, send_command
-from .overlay import start_overlays
-from .settings_dialog import SettingsDialog
+from .memory import release_memory, tune_malloc
+# Rarely used parts (capture, editor, recording, settings) are imported on first use: a tray app that sits in the
+# background for days should not keep their code and Qt widgets resident until they are needed.
 
 log = logging.getLogger("pinshot")
 HOTKEY_ACTIONS = {"hotkey_capture": "capture", "hotkey_fullscreen": "fullscreen",
-                  "hotkey_repeat": "repeat", "hotkey_pin": "pin_clipboard"}
+                  "hotkey_repeat": "repeat", "hotkey_pin": "pin_clipboard",
+                  "hotkey_record": "record"}
 COMMANDS = {"--capture": "capture", "--fullscreen": "fullscreen", "--repeat": "repeat",
-            "--pin-clipboard": "pin_clipboard", "--settings": "settings", "--quit": "quit"}
+            "--pin-clipboard": "pin_clipboard", "--record": "record", "--stop-recording": "stop_record",
+            "--settings": "settings", "--quit": "quit"}
 
 
 def setup_logging() -> None:
@@ -51,11 +53,18 @@ class App:
         self.cfg = Config()
         pin.PinWindow.config = self.cfg
         self.overlays: list = []
-        self.settings: SettingsDialog | None = None
+        self.settings = None
+        self._recorder = None
+        self.rec_frame = None
+        self.rec_bar = None
+        self.rec_toggle: QAction | None = None
+        self.selectors: list = []
+        self.last_output = ""
         self.tray = QSystemTrayIcon(app_icon(), qapp)
         self.tray.setToolTip(APP_NAME)
         self._build_menu()
         self.tray.activated.connect(self._tray_clicked)
+        self.tray.messageClicked.connect(self._reveal_output)
         self.tray.show()
         self.hotkeys = HotkeyManager()
         self.hotkeys.triggered.connect(self.dispatch)
@@ -79,6 +88,9 @@ class App:
             add(f"{s} saniye", f"delay:{s}", delay)
         add("Tam ekran yakala", "fullscreen")
         add("Son bölgeyi tekrarla", "repeat")
+        m.addSeparator()
+        add("Ekranı video olarak kaydet (GIF / MP4)…", "record")
+        self.rec_toggle = m.actions()[-1]
         m.addSeparator()
         add("Panodan sabitle", "pin_clipboard")
         add("Dosyadan sabitle…", "pin_file")
@@ -118,6 +130,10 @@ class App:
                 QTimer.singleShot(200, self.capture_fullscreen)
             elif name == "repeat":
                 QTimer.singleShot(200, self.capture_last_region)
+            elif name == "record":
+                self.toggle_recording()
+            elif name == "stop_record":
+                self.stop_recording()
             elif name == "pin_clipboard":
                 if not pin.pin_clipboard():
                     self.notify("Panoda sabitlenecek görsel veya metin yok")
@@ -138,7 +154,8 @@ class App:
             log.exception("action %s failed", name)
             self.notify(f"Hata: {name} başarısız. Ayrıntılar günlükte.")
 
-    def _grab(self) -> list[Capture] | None:
+    def _grab(self):
+        from .capture import grab_screens, looks_blank, mac_screen_access
         if not mac_screen_access():
             self.notify("macOS: Sistem Ayarları › Gizlilik › Ekran Kaydı'nda PinShot'a izin verin, sonra yeniden başlatın.")
             return None
@@ -159,10 +176,19 @@ class App:
     def _capture_now(self) -> None:
         caps = self._grab()
         if caps:
+            from .overlay import start_overlays
             self.overlays = start_overlays(caps, self.cfg, self.notify)
+            for o in self.overlays:
+                o.closed.connect(self._overlay_closed)
+
+    def _overlay_closed(self) -> None:
+        self.overlays = []                     # drop the references so the screenshots can be freed
+        QTimer.singleShot(500, release_memory)
+        QTimer.singleShot(3000, release_memory)   # again after Qt's deferred widget deletion has run
 
     def _finish_image(self, img: QImage, what: str) -> None:
         QGuiApplication.clipboard().setImage(img)
+        QTimer.singleShot(500, release_memory)
         msg = f"{what} panoya kopyalandı ({img.width()}×{img.height()})"
         if self.cfg["auto_save"]:
             path = output.unique_path(os.path.join(self.cfg.save_dir(), output.timestamp_name(self.cfg["format"])))
@@ -173,6 +199,7 @@ class App:
     def capture_fullscreen(self) -> None:
         caps = self._grab()
         if caps:
+            from .capture import screen_under_cursor
             self._finish_image(screen_under_cursor(caps, QCursor.pos()).image, "Tam ekran")
 
     def capture_last_region(self) -> None:
@@ -204,12 +231,126 @@ class App:
             self.settings.raise_()
             self.settings.activateWindow()
             return
+        from .settings_dialog import SettingsDialog
         self.settings = SettingsDialog(self.cfg)
         self.settings.applied.connect(self.reload_hotkeys)
         self.settings.finished.connect(lambda _: setattr(self, "settings", None))
         self.settings.show()
 
+    # ------------------------------------------------------------ screen recording
+    @property
+    def recorder(self):
+        if self._recorder is None:
+            from .recorder import Recorder
+            r = Recorder()
+            r.tick.connect(self._rec_tick)
+            r.finished.connect(self._rec_finished)
+            r.failed.connect(self._rec_failed)
+            self._recorder = r
+        return self._recorder
+
+    def _recording_active(self) -> bool:
+        return self._recorder is not None and self._recorder.active
+
+    def toggle_recording(self) -> None:
+        if self._recording_active():
+            self.stop_recording()
+        else:
+            self.pick_recording_area()
+
+    def pick_recording_area(self) -> None:
+        if self.selectors or any(_alive(o) and o.isVisible() for o in self.overlays):
+            return
+        from .recorder import find_ffmpeg
+        if find_ffmpeg() is None:
+            self.notify("Video kaydı için ffmpeg bulunamadı.")
+            return
+        if QGuiApplication.platformName().startswith("wayland"):
+            self.notify("Wayland'de ekran kaydı desteklenmiyor. X11 / XWayland oturumu gerekir.")
+            return
+        QTimer.singleShot(150, self._open_selectors)
+
+    def _open_selectors(self) -> None:
+        caps = self._grab()
+        if not caps:
+            return
+        from .overlay import start_overlays
+        from .record_ui import RecordSelector
+        self.selectors = start_overlays(caps, self.cfg, self.notify, factory=RecordSelector)
+        for o in self.selectors:
+            o.chosen.connect(self._start_recording)
+            o.closed.connect(self._selector_closed)
+
+    def _selector_closed(self) -> None:
+        self.selectors = []
+        QTimer.singleShot(500, release_memory)
+
+    def _start_recording(self, info: dict) -> None:
+        from .record_ui import RecordingBar, RecordingFrame
+        screen, region, fmt, fps = info["screen"], info["region"], info["fmt"], info["fps"]
+        path = output.unique_path(os.path.join(self.cfg.save_dir(), output.timestamp_name(fmt)))
+        if not self.recorder.start(screen, region, fmt, fps, path, int(self.cfg["record_max_seconds"]),
+                                   bool(self.cfg["record_cursor"])):
+            return
+        g = region.translated(screen.geometry().topLeft())
+        self.rec_frame = RecordingFrame(g)
+        self.rec_frame.show()
+        self.rec_bar = RecordingBar()
+        self.rec_bar.stop_requested.connect(self.stop_recording)
+        if self.rec_bar.place_outside(g, screen.geometry()):
+            self.rec_bar.show()
+        else:                                    # the region fills the screen: a bar would end up in the video
+            self.rec_bar.deleteLater()
+            self.rec_bar = None
+        self.tray.setIcon(recording_icon())
+        self.tray.setToolTip("PinShot – kayıt sürüyor")
+        if self.rec_toggle:
+            self.rec_toggle.setText("Kaydı durdur")
+        hk = self.cfg["hotkey_record"]
+        self.notify("Kayıt başladı. Durdurmak için tepsi simgesi" + (" veya kısayol" if hk else "") + " kullanılabilir.")
+
+    def _rec_tick(self, secs: int) -> None:
+        if self.rec_bar:
+            self.rec_bar.set_elapsed(secs)
+
+    def stop_recording(self) -> None:
+        if self._recording_active():
+            self.notify("Kayıt kaydediliyor…")
+            self.recorder.stop()
+        self._end_recording_ui()
+
+    def _end_recording_ui(self) -> None:
+        for w in (self.rec_frame, self.rec_bar):
+            if w is not None:
+                w.close()
+                w.deleteLater()
+        self.rec_frame = self.rec_bar = None
+        self.tray.setIcon(app_icon())
+        self.tray.setToolTip(APP_NAME)
+        if self.rec_toggle:
+            self.rec_toggle.setText("Ekranı video olarak kaydet (GIF / MP4)…")
+        QTimer.singleShot(1000, release_memory)
+
+    def _rec_finished(self, path: str) -> None:
+        self.last_output = path
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(path)])
+        QGuiApplication.clipboard().setMimeData(mime)       # paste the file straight into a chat or e-mail
+        size = os.path.getsize(path) / 1024 / 1024
+        self.notify(f"Kayıt hazır ({size:.1f} MB), dosya panoya kopyalandı. Klasörü açmak için tıkla.")
+        release_memory()
+
+    def _rec_failed(self, msg: str) -> None:
+        self._end_recording_ui()
+        self.notify(msg)
+
+    def _reveal_output(self) -> None:
+        if self.last_output:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(self.last_output)))
+
     def quit(self) -> None:
+        if self._recorder is not None:
+            self._recorder.cancel()
         self.hotkeys.stop()
         pin.close_all()
         self.cfg.save()
@@ -238,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         from .selftest import run
         i = argv.index("--selftest")
         return run(argv[i + 1] if i + 1 < len(argv) else None)
+    tune_malloc()                      # before Qt/pynput start threads
     setup_logging()
     QCoreApplication.setApplicationName(APP_NAME)
     QCoreApplication.setOrganizationName(APP_NAME)
@@ -254,15 +396,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not QSystemTrayIcon.isSystemTrayAvailable():
         log.warning("no system tray available; hotkeys and CLI commands still work")
+    from .recorder import cleanup_stale_temp
+    cleanup_stale_temp()
     server = CommandServer()
     if not server.listen():
         log.warning("IPC server could not listen; single-instance guard disabled")
     app = App(qapp)
+    QTimer.singleShot(4000, release_memory)               # drop start-up garbage (matters most on Windows)
     server.command.connect(lambda c: app.dispatch(c) if c != "ping" else app.notify("PinShot zaten çalışıyor"))
     signal.signal(signal.SIGINT, lambda *_: app.quit())
-    keepalive = QTimer()                                    # lets Python handle SIGINT while Qt runs
-    keepalive.start(500)
-    keepalive.timeout.connect(lambda: None)
+    keepalive = QTimer()                                    # only for Ctrl+C in a terminal: no idle wake-ups otherwise
+    if sys.stdin is not None and sys.stdin.isatty():
+        keepalive.start(1000)
+        keepalive.timeout.connect(lambda: None)
     if cmd:
         QTimer.singleShot(300, lambda: app.dispatch(cmd))
     code = qapp.exec()

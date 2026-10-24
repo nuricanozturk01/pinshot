@@ -1,6 +1,7 @@
 # PinShot
 
-Capture part of your screen, mark it up, copy it, or keep it floating above your other windows. Works on Windows, macOS and Linux.
+Capture part of your screen, mark it up, copy it, or keep it floating above your other windows. You can also record the screen as
+an MP4 or a GIF. Works on Windows, macOS and Linux.
 
 Taking a screenshot is easy. The work that comes after it is not: you want to point at an error message, put a design next to
 your code, copy a table from a PDF, or grab text that cannot be selected. PinShot turns these small jobs into one shortcut:
@@ -23,6 +24,15 @@ capture, annotate, paste. Or pin the image and keep it in front of you while you
 
 **OCR**
 - Reads text from an image. The model ships with the app, so it works offline and your image never leaves your computer.
+
+**Screen recording**
+- Record a region or a whole monitor as **MP4** or **GIF**. With several monitors, each one has its own picker, so you
+  choose the screen by clicking on it.
+- Light on resources: frames are streamed to a separate low-priority encoder, so memory stays flat however long you record.
+  Large screens are scaled down while recording (1920 px wide for MP4, 960 px for GIF).
+- A red frame around the area (outside the video) and a small stop bar show that you are recording. A recording stops
+  by itself after the time limit you set (10 minutes by default).
+- The finished file is copied to the clipboard, so you can paste it into a chat or an e-mail.
 
 **Everyday use**
 - Lives in the system tray. Shortcuts can be changed in the settings.
@@ -60,18 +70,45 @@ pip install -e .
 python -m pinshot
 ```
 
+## Starting PinShot
+
+PinShot is a tray app: after you start it, it waits in the background and uses almost no CPU.
+
+| System | How to start it | Where it lives |
+|---|---|---|
+| Windows | Start menu → **PinShot** (the installer can also add it to start-up) | Tray icon at the bottom right. If you do not see it, click the `^` arrow |
+| macOS | Open **PinShot** from Applications or Launchpad | Menu bar icon at the top right (no Dock icon) |
+| Linux | Application menu → **PinShot**, or run `pinshot` in a terminal | Tray icon. GNOME has no tray by default: install the *AppIndicator* extension, or just use the shortcuts |
+
+To start it automatically at login, turn on *Settings → Start at login*.
+
 ## Usage
 
-Default shortcuts (you can change them in the settings):
+Default shortcuts. You can change all of them in the settings.
 
-| Shortcut | Action |
-|---|---|
-| `Ctrl+Alt+A` | Capture a region |
-| `Ctrl+Alt+F` | Capture the screen under the cursor |
-| `Ctrl+Alt+R` | Capture the last region again |
-| `F3` | Pin the clipboard content |
+| Action | Windows / Linux | macOS |
+|---|---|---|
+| Capture a region | `Ctrl+Alt+A` | `Control+Option+A` |
+| Capture the screen under the cursor | `Ctrl+Alt+F` | `Control+Option+F` |
+| Capture the last region again | `Ctrl+Alt+R` | `Control+Option+R` |
+| Start / stop screen recording | `Ctrl+Alt+V` | `Control+Option+V` |
+| Pin the clipboard content | `F3` | `F3` |
 
-On macOS, use `Cmd` instead of `Ctrl`.
+You can also click the tray icon, or use its menu. On macOS, global shortcuts need the *Accessibility* permission.
+On Wayland there are no global shortcuts, so bind a key in your desktop settings to `pinshot --capture`
+(or `--record`).
+
+In the editor and on pinned windows, `Ctrl` means **`⌘ Command`** on macOS (for example `⌘Z` to undo, `⌘+wheel` to
+resize a pin), and `Alt` means `Option`.
+
+**Recording a video**
+
+1. Press the recording shortcut (or choose *Record screen* in the tray menu). Every monitor shows a picker.
+2. On the monitor you want, choose **MP4** or **GIF** and the frame rate. Then drag an area and press *Record selection*, or
+   press *Record whole screen* (or `Enter`).
+3. To stop, press the same shortcut again, click *Stop* on the small bar, or use the tray menu.
+
+The file is saved in your capture folder and copied to the clipboard. Click the notification to open the folder.
 
 **In the capture screen**
 
@@ -97,14 +134,16 @@ closes it. The right-click menu has copy, save, OCR, size, rotate, lock and bord
 **Command line**
 
 ```
-pinshot --capture | --fullscreen | --repeat | --pin-clipboard | --settings | --quit | --version
+pinshot --capture | --fullscreen | --repeat | --record | --stop-recording | --pin-clipboard | --settings | --quit | --version
 ```
 
 Commands are sent to the running instance. If PinShot is not running yet, it starts first.
 
 ## Limitations
 
-- No scrolling (long) screenshots, no GIF or video recording.
+- The interface language is Turkish only for now.
+- No scrolling (long) screenshots. Screen recordings have no sound.
+- Screen recording does not work on Wayland yet (the compositor does not allow it). Use an X11 session, Windows or macOS.
 - No window detection (selecting a window automatically with the mouse).
 - On Windows ARM64 there is no ready-made package for the OCR engine, so OCR does not work there. That build is experimental.
 - On macOS, the full-screen overlay may not cover the menu bar.
@@ -141,6 +180,12 @@ The idea comes from desktop screenshot tools like PixPin. The code was written i
 [Qt](https://www.qt.io/) (PySide6), OCR uses [RapidOCR](https://github.com/RapidAI/RapidOCR) and ONNX Runtime, and global
 shortcuts use [pynput](https://github.com/moses-palmer/pynput).
 
+## Third-party software
+
+Video recording runs [FFmpeg](https://ffmpeg.org/) as a separate program, taken from the
+[imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) package. That build is licensed under the GPL; PinShot does not
+link to it. OCR models come from RapidOCR (Apache-2.0).
+
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). The bundled FFmpeg binary keeps its own license.

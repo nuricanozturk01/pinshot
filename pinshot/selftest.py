@@ -147,6 +147,32 @@ def run(outfile: str | None) -> int:
             raise AssertionError(f"unexpected OCR output: {text!r}\nDIAGNOSTICS:\n{ocr_diagnostics(img)}")
         return "ocr"
 
+    def video() -> str:
+        import platform
+        import time
+        from .recorder import Encoder, find_ffmpeg
+        exe = find_ffmpeg()
+        if exe is None:
+            if sys.platform == "win32" and platform.machine().upper() == "ARM64":
+                return "skipped (no bundled ffmpeg for Windows ARM64)"
+            raise AssertionError("ffmpeg is missing from the build")
+        w, h = 161, 91                                     # odd size on purpose: must be handled
+        res = []
+        for fmt, magic in (("mp4", b"ftyp"), ("gif", b"GIF8")):
+            out = os.path.join(tempfile.gettempdir(), f"pinshot-selftest.{fmt}")
+            enc = Encoder(exe, (w, h), 15, fmt, out)
+            for i in range(20):
+                enc.push(bytes([(i * 12) % 256, 90, 200, 255]) * (w * h))
+                time.sleep(1 / 15)
+            ok, err = enc.finish()
+            assert ok, f"{fmt} encode failed: {err}"
+            with open(out, "rb") as f:
+                head = f.read(12)
+            os.remove(out)
+            assert magic in head, f"{fmt}: unexpected file header {head!r}"
+            res.append(fmt)
+        return "+".join(res)
+
     def hotkeys() -> str:
         try:
             import pynput  # noqa: F401
@@ -158,7 +184,7 @@ def run(outfile: str | None) -> int:
 
     lines.append(f"PinShot {__version__} on {sys.platform} {sys.version.split()[0]}")
     for name, fn in (("render", render), ("icons", icons), ("overlay", overlay), ("ocr", ocr),
-                     ("hotkeys", hotkeys)):
+                     ("video", video), ("hotkeys", hotkeys)):
         check(name, fn)
     text = "\n".join(lines) + f"\nRESULT {'OK' if ok else 'FAILED'}\n"
     if outfile:

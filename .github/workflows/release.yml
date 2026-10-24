@@ -80,6 +80,11 @@ jobs:
       - name: Build application (PyInstaller)
         run: pyinstaller --noconfirm --clean packaging/pinshot.spec
 
+      - name: Sign bundled ffmpeg (macOS, required on Apple Silicon)
+        if: runner.os == 'macOS'
+        run: |
+          find dist/PinShot.app -type f -name 'ffmpeg-*' ! -type l -exec chmod 755 {} \; -exec codesign --force --sign - {} \;
+
       - name: Self-test built app (Linux / macOS)
         if: runner.os != 'Windows'
         run: |
