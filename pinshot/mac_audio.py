@@ -15,7 +15,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 
 log = logging.getLogger(__name__)
@@ -96,52 +95,47 @@ class ChildCapture:
         self._err = open(self._err_path, "wb")
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._err)
         self.started_at = 0.0
-        self._ready = threading.Event()
-        self._watcher = threading.Thread(target=self._watch, name="pinshot-capture-watch", daemon=True)
-        self._watcher.start()
+        self._ready = False
+        self._pending = b""
+        self._fd = self.proc.stdout.fileno()
+        os.set_blocking(self._fd, False)         # polled from wait_ready(): no reader thread (it crashed CPython on macOS)
 
-    def _watch(self) -> None:
-        """Ready = the helper printed its ready line, or (ffmpeg) the output file started to grow.
-
-        The pipe is read with os.read on the raw descriptor: iterating the buffered file object from a worker thread
-        crashed CPython on macOS (segmentation fault) while another thread was waiting on the process."""
-        try:
-            if self.ready_line is not None:
-                fd = self.proc.stdout.fileno()
-                pending = b""
-                while True:
-                    chunk = os.read(fd, 4096)                    # blocks; returns b"" when the process has ended
-                    if not chunk:
-                        return
-                    pending += chunk
-                    while b"\n" in pending:
-                        line, pending = pending.split(b"\n", 1)
-                        if line.decode("utf-8", "replace").strip() == self.ready_line:
-                            self.started_at = time.monotonic()
-                            self._ready.set()
-                            return
-            end = time.monotonic() + START_TIMEOUT
-            while time.monotonic() < end and self.proc.poll() is None:
-                if os.path.exists(self.path) and os.path.getsize(self.path) > 0:
-                    self.started_at = time.monotonic()
-                    self._ready.set()
-                    return
-                time.sleep(0.02)
-        except (OSError, ValueError):
-            pass
+    def _poll_ready(self) -> bool:
+        """Ready = the helper printed its ready line, or (ffmpeg) the output file started to grow."""
+        if self._ready:
+            return True
+        if self.ready_line is not None:
+            try:
+                chunk = os.read(self._fd, 4096)
+            except (BlockingIOError, InterruptedError):
+                chunk = b""
+            except OSError:
+                chunk = b""
+            self._pending += chunk
+            while b"\n" in self._pending:
+                line, self._pending = self._pending.split(b"\n", 1)
+                if line.decode("utf-8", "replace").strip() == self.ready_line:
+                    self._ready = True
+                    break
+        elif os.path.exists(self.path) and os.path.getsize(self.path) > 0:
+            self._ready = True
+        if self._ready:
+            self.started_at = time.monotonic()
+        return self._ready
 
     def wait_ready(self, timeout: float = START_TIMEOUT) -> None:
-        """Raise RuntimeError with the reason if the capture did not start."""
+        """Block until the capture runs; raise RuntimeError with the reason if it did not start."""
         end = time.monotonic() + timeout
         while time.monotonic() < end:
-            if self._ready.wait(0.05):
+            if self._poll_ready():
                 return
             if self.proc.poll() is not None:
+                self._poll_ready()                           # it may have printed the line just before exiting
                 break
-        if self._ready.is_set():
+            time.sleep(0.02)
+        if self._ready:
             return
-        code = self.proc.poll()
-        raise RuntimeError(self.explain(code))
+        raise RuntimeError(self.explain(self.proc.poll()))
 
     def explain(self, code: int | None) -> str:
         err = self.stderr_text()
@@ -183,7 +177,6 @@ class ChildCapture:
                         self.proc.kill()
                         self.proc.wait(timeout=3)
         finally:
-            self._watcher.join(timeout=2)           # let the reader finish before its pipe is closed
             for pipe in (self.proc.stdout, self.proc.stdin):
                 try:
                     if pipe is not None:
