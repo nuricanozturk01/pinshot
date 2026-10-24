@@ -10,6 +10,16 @@ import pytest
 from pinshot.audio import AudioRecorder
 
 
+RELEASE = threading.Event()          # set after every test: wakes any fake that pretends to block
+
+
+@pytest.fixture(autouse=True)
+def _release_blocked_fakes():
+    RELEASE.clear()
+    yield
+    RELEASE.set()
+
+
 class FakeRecorder:
     def __init__(self, dev, channels, log):
         self.dev, self.channels, self.log = dev, channels, log
@@ -190,10 +200,12 @@ def test_device_scan_never_blocks_the_caller(monkeypatch):
 
     class Hang(types.ModuleType):
         def all_microphones(self, include_loopback=False):
-            time.sleep(30)
+            RELEASE.wait(30)
+            return []
 
         def default_speaker(self):
-            time.sleep(30)
+            RELEASE.wait(30)
+            raise RuntimeError("released")
 
     monkeypatch.setitem(sys.modules, "soundcard", Hang("soundcard"))
     t = time.time()
@@ -315,7 +327,8 @@ def test_silent_microphone_is_reported_after_the_recording(fake):
 def test_microphone_that_never_delivers_data_is_reported(fake):
     class Mute(FakeRecorder):
         def record(self, numframes):
-            time.sleep(60)                                 # like soundcard's record() waiting forever
+            RELEASE.wait(60)                               # like soundcard's record() waiting forever
+            raise RuntimeError("released")
 
     fake.mic.recorder = lambda samplerate, channels, blocksize: Mute(fake.mic, channels, fake.log)
     rec = AudioRecorder(False, True)

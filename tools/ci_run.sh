@@ -8,7 +8,8 @@ log="$(mktemp)"
 code=${PIPESTATUS[0]}
 if [ "$code" -ne 0 ]; then
   # annotation messages need %, CR and LF escaped
-  msg="$(grep -vE '^\s*$' "$log" | tail -n 45 | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')"
+  key="$(grep -nE 'Fatal Python error|Segmentation|Aborted|Traceback|Error:|error:|FAILED|Timeout|Thread 0x' "$log" | head -n 12)"
+  msg="$( { echo "--- first error lines:"; echo "$key"; echo "--- last lines:"; grep -vE '^\s*$' "$log" | tail -n 80; } | cut -c1-240 | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')"
   echo "::error title=${title} failed (exit ${code})::${msg}"
 fi
 exit "$code"

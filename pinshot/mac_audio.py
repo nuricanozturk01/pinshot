@@ -97,7 +97,8 @@ class ChildCapture:
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._err)
         self.started_at = 0.0
         self._ready = threading.Event()
-        threading.Thread(target=self._watch, name="pinshot-capture-watch", daemon=True).start()
+        self._watcher = threading.Thread(target=self._watch, name="pinshot-capture-watch", daemon=True)
+        self._watcher.start()
 
     def _watch(self) -> None:
         """Ready = the helper printed its ready line, or (ffmpeg) the output file started to grow."""
@@ -174,6 +175,13 @@ class ChildCapture:
                         self.proc.kill()
                         self.proc.wait(timeout=3)
         finally:
+            self._watcher.join(timeout=2)           # let the reader finish before its pipe is closed
+            for pipe in (self.proc.stdout, self.proc.stdin):
+                try:
+                    if pipe is not None:
+                        pipe.close()
+                except (OSError, ValueError):
+                    pass
             try:
                 self._err.close()
             except OSError:
