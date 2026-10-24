@@ -7,3 +7,4 @@ release/
 *.egg-info/
 .pytest_cache/
 packaging/bin/
+/target/

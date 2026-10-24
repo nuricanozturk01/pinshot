@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = ["crates/core"]
+
+[workspace.package]
+version = "2.1.0-dev"
+edition = "2021"
+license = "MIT"
+authors = ["Nuri Can OZTURK"]
+repository = "https://github.com/nuricanozturk01/pinshot"
+rust-version = "1.80"
+
+[workspace.dependencies]
+tiny-skia = "0.11"
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+directories = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+thiserror = "2"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2          # image/font crates are unusably slow in debug builds

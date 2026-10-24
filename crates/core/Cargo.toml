@@ -1,0 +1,18 @@
+[package]
+name = "pinshot-core"
+description = "PinShot logic that does not depend on the operating system: geometry, annotations, rendering, config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tiny-skia.workspace = true
+fontdue.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+directories.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+log.workspace = true
