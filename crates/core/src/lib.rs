@@ -10,10 +10,13 @@ pub mod annotate;
 pub mod color;
 pub mod compose;
 pub mod config;
+pub mod editor;
 pub mod geom;
 pub mod history;
 pub mod hotkey;
+pub mod i18n;
 pub mod output;
+pub mod pin;
 pub mod render;
 pub mod text;
 

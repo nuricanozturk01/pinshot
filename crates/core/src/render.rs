@@ -64,12 +64,17 @@ fn rect_path(x: f32, y: f32, w: f32, h: f32) -> Option<Path> {
 
 /// Draw every item in order.
 pub fn render_items(pm: &mut Pixmap, items: &[Item], view: &View) {
+    let mut n = 0;
     for it in items {
-        render_item(pm, it, view);
+        if it.kind == Kind::Number {
+            n += 1;
+        }
+        render_item(pm, it, view, n);
     }
 }
 
-pub fn render_item(pm: &mut Pixmap, it: &Item, view: &View) {
+/// Number badges are numbered by their order among all number items; `number` is that count for this item.
+pub fn render_item(pm: &mut Pixmap, it: &Item, view: &View, number: usize) {
     let s = view.scale;
     let id = Transform::identity();
     match it.kind {
@@ -103,7 +108,7 @@ pub fn render_item(pm: &mut Pixmap, it: &Item, view: &View) {
         Kind::Line | Kind::Arrow => draw_line(pm, it, view),
         Kind::Pen | Kind::Marker => draw_freehand(pm, it, view),
         Kind::Text => draw_text(pm, it, view),
-        Kind::Number => draw_number(pm, it, view),
+        Kind::Number => draw_number(pm, it, view, number),
         Kind::Mosaic | Kind::Blur => {
             let (a, b) = (view.pt(it.first()), view.pt(it.last()));
             let strength = it.width.max(1) as f32 * s;
@@ -275,7 +280,8 @@ pub fn blit_glyph(pm: &mut Pixmap, g: &crate::text::Glyph, x: f32, y: f32, c: Rg
     }
 }
 
-fn draw_number(pm: &mut Pixmap, it: &Item, view: &View) {
+fn draw_number(pm: &mut Pixmap, it: &Item, view: &View, number: usize) {
+    let label = number.to_string();
     let s = view.scale;
     let r = it.number_radius() * s;
     let (cx, cy) = view.pt(it.first());
@@ -295,12 +301,12 @@ fn draw_number(pm: &mut Pixmap, it: &Item, view: &View) {
     };
     let fonts = Fonts::embedded();
     let px = r * 1.1;
-    let w = fonts.line_width(&it.text, px, true);
+    let w = fonts.line_width(&label, px, true);
     let asc = fonts.ascent(px, true);
     let lh = fonts.line_height(px, true);
     let mut pen = cx - w / 2.0;
     let base = cy - lh / 2.0 + asc;
-    for ch in it.text.chars() {
+    for ch in label.chars() {
         let g = fonts.glyph(ch, px, true);
         blit_glyph(
             pm,
@@ -329,38 +335,48 @@ fn clamp_region(
     Some((x0 as usize, y0 as usize, x1 as usize, y1 as usize))
 }
 
-/// Replace each `block`×`block` cell with its average colour.
+/// Replace each `block`×`block` cell with its average colour. The cell grid starts at the region's top-left corner
+/// (even when part of the region lies outside the pixmap), so previews and exports line up exactly.
 pub fn mosaic(pm: &mut Pixmap, x0: f32, y0: f32, x1: f32, y1: f32, block: usize) {
-    let Some((x0, y0, x1, y1)) = clamp_region(pm, x0, y0, x1, y1) else {
+    let Some((cx0, cy0, cx1, cy1)) = clamp_region(pm, x0, y0, x1, y1) else {
         return;
     };
+    let (gx, gy) = (x0.floor() as i64, y0.floor() as i64);
     let w = pm.width() as usize;
-    let block = block.max(2);
+    let block = block.max(2) as i64;
     let data = pm.data_mut();
-    let mut by = y0;
-    while by < y1 {
-        let bh = block.min(y1 - by);
-        let mut bx = x0;
-        while bx < x1 {
-            let bw = block.min(x1 - bx);
+    // first cell row/column that touches the clamped region
+    let first = |g: i64, c: i64| g + (c - g).div_euclid(block) * block;
+    let mut by = first(gy, cy0 as i64);
+    while by < cy1 as i64 {
+        let (ya, yb) = (
+            by.max(cy0 as i64) as usize,
+            (by + block).min(cy1 as i64) as usize,
+        );
+        let mut bx = first(gx, cx0 as i64);
+        while bx < cx1 as i64 {
+            let (xa, xb) = (
+                bx.max(cx0 as i64) as usize,
+                (bx + block).min(cx1 as i64) as usize,
+            );
             let mut sum = [0u32; 4];
-            for y in by..by + bh {
-                for x in bx..bx + bw {
+            for y in ya..yb {
+                for x in xa..xb {
                     let i = (y * w + x) * 4;
                     for k in 0..4 {
                         sum[k] += data[i + k] as u32;
                     }
                 }
             }
-            let n = (bw * bh) as u32;
+            let n = ((xb - xa) * (yb - ya)) as u32;
             let avg = [
                 (sum[0] / n) as u8,
                 (sum[1] / n) as u8,
                 (sum[2] / n) as u8,
                 (sum[3] / n) as u8,
             ];
-            for y in by..by + bh {
-                for x in bx..bx + bw {
+            for y in ya..yb {
+                for x in xa..xb {
                     let i = (y * w + x) * 4;
                     data[i..i + 4].copy_from_slice(&avg);
                 }
@@ -490,7 +506,7 @@ mod tests {
             vec![Point::new(110.0, 210.0), Point::new(130.0, 230.0)],
         );
         r.fill = true;
-        render_item(&mut pm, &r, &View::new(Point::new(100.0, 200.0), 2.0));
+        render_item(&mut pm, &r, &View::new(Point::new(100.0, 200.0), 2.0), 0);
         assert_eq!(px(&pm, 30, 30), [0, 0, 0, 255]);
         assert_eq!(px(&pm, 70, 70), [255, 255, 255, 255]);
     }
@@ -504,7 +520,7 @@ mod tests {
             4,
             vec![Point::new(10.0, 10.0), Point::new(90.0, 90.0)],
         );
-        render_item(&mut pm, &r, &view());
+        render_item(&mut pm, &r, &view(), 0);
         assert_eq!(px(&pm, 50, 50), [255, 255, 255, 255]);
         assert_eq!(px(&pm, 10, 50)[0], 0);
     }
@@ -605,8 +621,8 @@ mod tests {
             3,
             vec![Point::new(5.0, 5.0), Point::new(5.0, 5.0)],
         );
-        render_item(&mut pm, &tiny, &view());
+        render_item(&mut pm, &tiny, &view(), 0);
         let one = Item::new(Kind::Pen, Rgba::BLACK, 3, vec![Point::new(5.0, 5.0)]);
-        render_item(&mut pm, &one, &view());
+        render_item(&mut pm, &one, &view(), 0);
     }
 }

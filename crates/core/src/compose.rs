@@ -7,20 +7,20 @@
 use crate::geom::Rect;
 use tiny_skia::Pixmap;
 
-pub struct Screen {
+pub struct Screen<'a> {
     /// Logical rectangle in desktop coordinates.
     pub rect: Rect,
     /// Pixels per logical unit.
     pub scale: f32,
-    pub pixmap: Pixmap,
+    pub pixmap: &'a Pixmap,
 }
 
 /// Compose `region` (logical) out of `screens`. Returns `None` if the region is empty or no screen overlaps it.
-pub fn compose_region(screens: &[Screen], region: Rect) -> Option<(Pixmap, f32)> {
+pub fn compose_region(screens: &[Screen<'_>], region: Rect) -> Option<(Pixmap, f32)> {
     if region.is_empty() {
         return None;
     }
-    let hit: Vec<&Screen> = screens
+    let hit: Vec<&Screen<'_>> = screens
         .iter()
         .filter(|s| s.rect.intersects(&region))
         .collect();
@@ -125,14 +125,22 @@ mod tests {
     use super::*;
     use tiny_skia::Color;
 
-    fn screen(rect: Rect, scale: f32, c: Color) -> Screen {
+    struct Shot(Rect, f32, Pixmap);
+
+    impl Shot {
+        fn screen(&self) -> Screen<'_> {
+            Screen {
+                rect: self.0,
+                scale: self.1,
+                pixmap: &self.2,
+            }
+        }
+    }
+
+    fn shot(rect: Rect, scale: f32, c: Color) -> Shot {
         let mut pm = Pixmap::new((rect.w * scale) as u32, (rect.h * scale) as u32).unwrap();
         pm.fill(c);
-        Screen {
-            rect,
-            scale,
-            pixmap: pm,
-        }
+        Shot(rect, scale, pm)
     }
 
     fn px(pm: &Pixmap, x: u32, y: u32) -> [u8; 4] {
@@ -142,14 +150,15 @@ mod tests {
 
     #[test]
     fn region_inside_one_screen_is_an_exact_crop() {
-        let mut s = screen(
+        let mut s = shot(
             Rect::new(0.0, 0.0, 100.0, 100.0),
             1.0,
             Color::from_rgba8(10, 20, 30, 255),
         );
-        s.pixmap.data_mut()[(50 * 100 + 20) * 4..(50 * 100 + 20) * 4 + 4]
+        s.2.data_mut()[(50 * 100 + 20) * 4..(50 * 100 + 20) * 4 + 4]
             .copy_from_slice(&[1, 2, 3, 255]);
-        let (out, scale) = compose_region(&[s], Rect::new(10.0, 40.0, 30.0, 20.0)).unwrap();
+        let (out, scale) =
+            compose_region(&[s.screen()], Rect::new(10.0, 40.0, 30.0, 20.0)).unwrap();
         assert_eq!((out.width(), out.height(), scale), (30, 20, 1.0));
         assert_eq!(px(&out, 10, 10), [1, 2, 3, 255]);
         assert_eq!(px(&out, 0, 0), [10, 20, 30, 255]);
@@ -157,34 +166,36 @@ mod tests {
 
     #[test]
     fn region_across_two_screens_joins_them_at_the_seam() {
-        let a = screen(
+        let a = shot(
             Rect::new(0.0, 0.0, 100.0, 100.0),
             1.0,
             Color::from_rgba8(255, 0, 0, 255),
         );
-        let b = screen(
+        let b = shot(
             Rect::new(100.0, 0.0, 100.0, 100.0),
             1.0,
             Color::from_rgba8(0, 0, 255, 255),
         );
-        let (out, _) = compose_region(&[a, b], Rect::new(90.0, 10.0, 20.0, 10.0)).unwrap();
+        let (out, _) =
+            compose_region(&[a.screen(), b.screen()], Rect::new(90.0, 10.0, 20.0, 10.0)).unwrap();
         assert_eq!(px(&out, 9, 5), [255, 0, 0, 255]);
         assert_eq!(px(&out, 10, 5), [0, 0, 255, 255]);
     }
 
     #[test]
     fn mixed_scales_use_the_larger_one_and_leave_no_seam() {
-        let a = screen(
+        let a = shot(
             Rect::new(0.0, 0.0, 100.0, 100.0),
             1.0,
             Color::from_rgba8(255, 0, 0, 255),
         );
-        let b = screen(
+        let b = shot(
             Rect::new(100.0, 0.0, 100.0, 100.0),
             2.0,
             Color::from_rgba8(0, 0, 255, 255),
         );
-        let (out, scale) = compose_region(&[a, b], Rect::new(90.0, 0.0, 20.0, 10.0)).unwrap();
+        let (out, scale) =
+            compose_region(&[a.screen(), b.screen()], Rect::new(90.0, 0.0, 20.0, 10.0)).unwrap();
         assert_eq!((out.width(), out.height(), scale), (40, 20, 2.0));
         assert_eq!(px(&out, 0, 0), [255, 0, 0, 255]);
         assert_eq!(px(&out, 19, 19), [255, 0, 0, 255]);
@@ -197,15 +208,12 @@ mod tests {
 
     #[test]
     fn uncovered_parts_are_transparent_and_empty_regions_fail() {
-        let a = screen(Rect::new(0.0, 0.0, 50.0, 50.0), 1.0, Color::WHITE);
-        let (out, _) = compose_region(&[a], Rect::new(40.0, 0.0, 20.0, 10.0)).unwrap();
+        let a = shot(Rect::new(0.0, 0.0, 50.0, 50.0), 1.0, Color::WHITE);
+        let (out, _) = compose_region(&[a.screen()], Rect::new(40.0, 0.0, 20.0, 10.0)).unwrap();
         assert_eq!(px(&out, 5, 5)[3], 255);
         assert_eq!(px(&out, 15, 5)[3], 0);
         assert!(compose_region(&[], Rect::new(0.0, 0.0, 10.0, 10.0)).is_none());
-        assert!(compose_region(
-            &[screen(Rect::new(0.0, 0.0, 10.0, 10.0), 1.0, Color::WHITE)],
-            Rect::new(0.0, 0.0, 0.0, 5.0)
-        )
-        .is_none());
+        let b = shot(Rect::new(0.0, 0.0, 10.0, 10.0), 1.0, Color::WHITE);
+        assert!(compose_region(&[b.screen()], Rect::new(0.0, 0.0, 0.0, 5.0)).is_none());
     }
 }

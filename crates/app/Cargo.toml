@@ -1,0 +1,47 @@
+[package]
+name = "pinshot"
+description = "Capture, annotate, pin, OCR and record your screen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "pinshot"
+path = "src/main.rs"
+
+[dependencies]
+pinshot-core = { path = "../core" }
+pinshot-ocr = { path = "../ocr" }
+tiny-skia.workspace = true
+image.workspace = true
+serde_json.workspace = true
+log.workspace = true
+directories.workspace = true
+winit = "0.30"
+softbuffer = "0.4"
+arboard = { version = "3.7", default-features = false, features = ["image-data"] }
+global-hotkey = "0.9"
+rfd = "0.17"
+interprocess = "2.4"
+sys-locale = "0.3"
+auto-launch = "0.6"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.14", features = ["randr", "xfixes", "xtest", "shm"] }
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.26"
+windows = { version = "0.62", features = [
+  "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tray-icon = "0.26"
+core-graphics = "0.25"
+core-foundation = "0.10"
+
+[dev-dependencies]
+x11rb = { version = "0.14", features = ["xtest"] }

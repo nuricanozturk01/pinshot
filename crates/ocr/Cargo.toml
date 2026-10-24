@@ -1,0 +1,15 @@
+[package]
+name = "pinshot-ocr"
+description = "Offline text recognition (PP-OCRv4 models, pure Rust inference)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tract-onnx = "0.23.9"
+tiny-skia.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+pinshot-core = { path = "../core" }

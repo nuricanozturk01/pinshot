@@ -48,6 +48,8 @@ pub struct Config {
     pub format: String,
     pub quality: u8,
     pub auto_save: bool,
+    /// `auto` (system language), `en` or `tr`
+    pub language: String,
     pub hotkey_capture: String,
     pub hotkey_fullscreen: String,
     pub hotkey_repeat: String,
@@ -82,6 +84,7 @@ impl Default for Config {
             format: "png".into(),
             quality: 92,
             auto_save: false,
+            language: "auto".into(),
             hotkey_capture: hk("hotkey_capture"),
             hotkey_fullscreen: hk("hotkey_fullscreen"),
             hotkey_repeat: hk("hotkey_repeat"),
