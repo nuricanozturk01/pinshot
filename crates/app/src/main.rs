@@ -30,6 +30,7 @@ mod toast;
 mod toolbar;
 mod tray;
 mod ui;
+mod units;
 
 const COMMANDS: [(&str, &str); 10] = [
     ("--capture", "capture"),
@@ -48,15 +49,33 @@ const COMMANDS: [(&str, &str); 10] = [
 /// our windows (blurry) and reports virtualised monitor sizes (wrong capture regions).
 #[cfg(windows)]
 fn init_windows() {
-    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    use std::os::windows::io::IntoRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Console::{
+        AttachConsole, GetStdHandle, SetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE,
+        STD_OUTPUT_HANDLE,
+    };
     use windows::Win32::UI::HiDpi::{
         SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
     };
-    // SAFETY: plain Win32 calls without pointer arguments; failure (already set) is harmless.
+    // SAFETY: plain Win32 calls; failure (already set, no parent console) is harmless.
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         // a GUI-subsystem exe has no stdout; `--version` / `--selftest` print into the launching terminal
-        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_ok() {
+            for (std_handle, name) in [
+                (STD_OUTPUT_HANDLE, "CONOUT$"),
+                (STD_ERROR_HANDLE, "CONOUT$"),
+            ] {
+                let unset = GetStdHandle(std_handle).map_or(true, |h| h.is_invalid());
+                // redirected output (a pipe or file) is already inherited; only a bare console needs reopening
+                if unset {
+                    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(name) {
+                        let _ = SetStdHandle(std_handle, HANDLE(f.into_raw_handle()));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -67,6 +86,9 @@ fn main() {
     if args.iter().any(|a| a == "--version") {
         println!("PinShot {}", env!("CARGO_PKG_VERSION"));
         return;
+    }
+    if args.iter().any(|a| a == "--selftest-window") {
+        std::process::exit(selftest::run_window());
     }
     if args.iter().any(|a| a == "--selftest") {
         std::process::exit(selftest::run());

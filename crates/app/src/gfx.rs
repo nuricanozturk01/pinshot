@@ -6,16 +6,6 @@ use tiny_skia::Pixmap;
 use winit::event_loop::OwnedDisplayHandle;
 use winit::window::Window;
 
-/// Window placement helpers. Desktop coordinates are physical pixels on Windows and Linux but points on macOS, where
-/// winit expects logical values; everything that positions a window goes through these.
-pub fn win_pos(x: f32, y: f32) -> winit::dpi::Position {
-    if cfg!(target_os = "macos") {
-        winit::dpi::LogicalPosition::new(x as f64, y as f64).into()
-    } else {
-        winit::dpi::PhysicalPosition::new(x as i32, y as i32).into()
-    }
-}
-
 /// Helper windows (overlays, menus, notifications, pins) keep out of the Windows taskbar and Alt+Tab list.
 pub fn tool_window(attrs: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
     #[cfg(windows)]
@@ -31,41 +21,6 @@ pub fn tool_window(attrs: winit::window::WindowAttributes) -> winit::window::Win
 /// to its inner size before the client-side title bar exists, so the compositor then squeezes the content area by the
 /// title bar's height and clips the dialog's bottom row. Those dialogs lay out at a fixed size anyway.
 pub const DIALOG_RESIZABLE: bool = cfg!(target_os = "linux");
-
-/// A size given in desktop units.
-pub fn size_units(w: f32, h: f32) -> winit::dpi::Size {
-    if cfg!(target_os = "macos") {
-        winit::dpi::LogicalSize::new(w.max(1.0) as f64, h.max(1.0) as f64).into()
-    } else {
-        winit::dpi::PhysicalSize::new(w.max(1.0) as u32, h.max(1.0) as u32).into()
-    }
-}
-
-/// A size given in physical pixels of a window with scale factor `sf`.
-pub fn size_px(w: f32, h: f32, sf: f32) -> winit::dpi::Size {
-    if cfg!(target_os = "macos") {
-        winit::dpi::LogicalSize::new((w / sf).max(1.0) as f64, (h / sf).max(1.0) as f64).into()
-    } else {
-        winit::dpi::PhysicalSize::new(w.max(1.0) as u32, h.max(1.0) as u32).into()
-    }
-}
-
-/// The window's outer rectangle in desktop units.
-pub fn outer_rect(w: &Window) -> pinshot_core::Rect {
-    let sf = if cfg!(target_os = "macos") {
-        w.scale_factor() as f32
-    } else {
-        1.0
-    };
-    let p = w.outer_position().unwrap_or_default();
-    let s = w.outer_size();
-    pinshot_core::Rect::new(
-        p.x as f32 / sf,
-        p.y as f32 / sf,
-        s.width as f32 / sf,
-        s.height as f32 / sf,
-    )
-}
 
 pub type Context = softbuffer::Context<OwnedDisplayHandle>;
 
