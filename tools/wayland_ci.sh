@@ -26,10 +26,16 @@ CONF
 pids=()
 dump() {
   echo "::group::diagnostics"
-  for f in "$OUT"/portal*.log "$OUT"/*.log; do echo "--- $f"; tail -n 60 "$f" || true; done
+  for f in portal-wlr portal pinshot; do
+    echo "--- $f.log"; tail -n 40 "$OUT/$f.log" 2>/dev/null || true
+  done
+  echo "--- xwayland.log (without keymap warnings)"
+  grep -v "Warning:\|xkbcomp\|^> " "$OUT/xwayland.log" 2>/dev/null | tail -n 10 || true
+  echo "--- bus names"
   dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
     org.freedesktop.DBus.ListNames 2>&1 | grep -i "portal" || true
-  swaymsg -t get_tree 2>/dev/null | head -c 4000 || true
+  echo "--- windows"
+  swaymsg -t get_tree 2>/dev/null | grep -E '"(name|app_id)"' | head -20 || true
   echo "::endgroup::"
 }
 cleanup() { kill "${pids[@]}" 2>/dev/null || true; }
