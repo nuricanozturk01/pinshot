@@ -23,6 +23,7 @@ fn plain_window(
         .with_position(crate::gfx::win_pos(pos.x, pos.y))
         .with_window_level(WindowLevel::AlwaysOnTop)
         .with_active(false);
+    let attrs = crate::gfx::tool_window(attrs);
     #[cfg(target_os = "linux")]
     let attrs = {
         use winit::platform::x11::{WindowAttributesExtX11, WindowType};

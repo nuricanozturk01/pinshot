@@ -82,6 +82,19 @@ pub fn command(exe: &Path) -> Command {
     }
 }
 
+/// Plain ffmpeg command; on Windows without a console window (the app has none, so a child would open one).
+fn plain(exe: &Path) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = Command::new(exe);
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        c
+    }
+    #[cfg(not(windows))]
+    Command::new(exe)
+}
+
 pub fn video_args(
     size: (u32, u32),
     o: &VideoOpts,
@@ -458,7 +471,7 @@ impl Encoder {
     }
 
     fn duration(&self) -> f64 {
-        let Ok(out) = Command::new(&self.exe)
+        let Ok(out) = plain(&self.exe)
             .args(["-hide_banner", "-i"])
             .arg(&self.temp)
             .output()
@@ -475,11 +488,7 @@ impl Encoder {
         }
         let mut err = String::new();
         for args in mux_args(&self.temp, tracks, t0_unix, dur, &self.out) {
-            match Command::new(&self.exe)
-                .args(&args)
-                .stdout(Stdio::null())
-                .output()
-            {
+            match plain(&self.exe).args(&args).stdout(Stdio::null()).output() {
                 Ok(o) if o.status.success() => return Ok(()),
                 Ok(o) => err = tail(&o.stderr),
                 Err(e) => err = e.to_string(),

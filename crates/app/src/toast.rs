@@ -147,6 +147,7 @@ impl Toast {
             .with_position(pos)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_active(false);
+        let attrs = crate::gfx::tool_window(attrs);
         #[cfg(target_os = "linux")]
         let attrs = {
             use winit::platform::x11::{WindowAttributesExtX11, WindowType};

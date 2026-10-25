@@ -55,6 +55,7 @@ impl MenuWin {
             .with_inner_size(crate::gfx::size_px(pw, ph, sf))
             .with_position(crate::gfx::win_pos(x, y))
             .with_window_level(WindowLevel::AlwaysOnTop);
+        let attrs = crate::gfx::tool_window(attrs);
         #[cfg(target_os = "linux")]
         let attrs = {
             use winit::platform::x11::{WindowAttributesExtX11, WindowType};

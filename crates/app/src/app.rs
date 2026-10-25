@@ -368,7 +368,7 @@ impl App {
         for (i, cap) in session.caps.iter().enumerate() {
             let r = cap.monitor.rect;
             let (_pw, _ph) = (cap.pixmap.width(), cap.pixmap.height());
-            let mut attrs = Window::default_attributes()
+            let attrs = Window::default_attributes()
                 .with_title("PinShot")
                 .with_decorations(false)
                 .with_resizable(false)
@@ -376,6 +376,7 @@ impl App {
                 .with_window_level(WindowLevel::AlwaysOnTop)
                 .with_position(crate::gfx::win_pos(r.x, r.y))
                 .with_inner_size(crate::gfx::size_units(r.w, r.h));
+            let mut attrs = crate::gfx::tool_window(attrs);
             if !cfg!(target_os = "macos") {
                 let h = handles
                     .iter()
@@ -429,6 +430,13 @@ impl App {
             p.sw.window.set_visible(false);
         }
         self.redraw_all();
+        if cfg!(windows) {
+            // the overlays are created hidden and shown after their first frame, but Windows delivers no
+            // WM_PAINT to a hidden window: draw the first frame ourselves
+            for win in 0..self.overlay.as_ref().map_or(0, |o| o.wins.len()) {
+                self.draw_overlay_window(win);
+            }
+        }
     }
 
     fn capture_fullscreen(&mut self, el: &ActiveEventLoop) {
@@ -1971,7 +1979,7 @@ pub fn open_url(url: &str) {
     let (cmd, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
         ("open", vec![url])
     } else if cfg!(windows) {
-        ("cmd", vec!["/C", "start", "", url])
+        ("rundll32", vec!["url.dll,FileProtocolHandler", url]) // no console window, no `&` quoting issues
     } else {
         ("xdg-open", vec![url])
     };

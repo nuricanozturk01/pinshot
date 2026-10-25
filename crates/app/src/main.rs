@@ -1,3 +1,6 @@
+// release builds on Windows are GUI apps: no console window next to the tray icon
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 // mimalloc hands freed memory back to the system; the glibc heap kept ~100 MB after a capture
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -41,7 +44,25 @@ const COMMANDS: [(&str, &str); 10] = [
     ("--quit", "quit"),
 ];
 
+/// Windows: opt in to per-monitor DPI before any window or screen query, otherwise the system scales
+/// our windows (blurry) and reports virtualised monitor sizes (wrong capture regions).
+#[cfg(windows)]
+fn init_windows() {
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    // SAFETY: plain Win32 calls without pointer arguments; failure (already set) is harmless.
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // a GUI-subsystem exe has no stdout; `--version` / `--selftest` print into the launching terminal
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 fn main() {
+    #[cfg(windows)]
+    init_windows();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version") {
         println!("PinShot {}", env!("CARGO_PKG_VERSION"));
@@ -51,6 +72,8 @@ fn main() {
         std::process::exit(selftest::run());
     }
     logging::init(std::env::var_os("PINSHOT_LOG_STDERR").is_some() || cfg!(debug_assertions));
+    // release builds abort on panic; leave the reason in the log first
+    std::panic::set_hook(Box::new(|info| log::error!("panic: {info}")));
     let cmd = COMMANDS
         .iter()
         .find(|(flag, _)| args.iter().any(|a| a == flag))

@@ -51,6 +51,7 @@ impl PinWin {
             .with_inner_size(crate::gfx::size_units(w, h))
             .with_position(crate::gfx::win_pos(at.x, at.y))
             .with_window_level(WindowLevel::AlwaysOnTop);
+        let attrs = crate::gfx::tool_window(attrs);
         #[cfg(target_os = "linux")]
         let attrs = {
             use winit::platform::x11::{WindowAttributesExtX11, WindowType};

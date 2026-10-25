@@ -16,6 +16,17 @@ pub fn win_pos(x: f32, y: f32) -> winit::dpi::Position {
     }
 }
 
+/// Helper windows (overlays, menus, notifications, pins) keep out of the Windows taskbar and Alt+Tab list.
+pub fn tool_window(attrs: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
+    #[cfg(windows)]
+    {
+        use winit::platform::windows::WindowAttributesExtWindows;
+        attrs.with_skip_taskbar(true)
+    }
+    #[cfg(not(windows))]
+    attrs
+}
+
 /// Whether fixed-size dialogs must be left resizable. winit's Wayland backend pins a non-resizable window's min/max
 /// to its inner size before the client-side title bar exists, so the compositor then squeezes the content area by the
 /// title bar's height and clips the dialog's bottom row. Those dialogs lay out at a fixed size anyway.
