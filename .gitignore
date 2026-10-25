@@ -4,3 +4,5 @@ release/
 wayland-out/
 packaging/bin/
 /target/
+.venv/
+__pycache__/
