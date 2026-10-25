@@ -568,7 +568,13 @@ mod tests {
         let mut data = vec![0u8; 30 * 30 * 4];
         data[(15 * 30 + 15) * 4] = 200;
         let mut busy = pixmap_from_bgrx_owned(30, 30, data).unwrap();
-        for (i, p) in busy.data_mut().chunks_exact_mut(4).enumerate() {
+        for (i, p) in busy
+            .data_mut()
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             p[0] = (i % 251) as u8;
         }
         assert!(!looks_blank(&busy));

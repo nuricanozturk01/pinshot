@@ -230,7 +230,7 @@ mod tests {
 
     fn two_by_three() -> Pixmap {
         let mut pm = Pixmap::new(2, 3).unwrap();
-        for (i, p) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+        for (i, p) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
             p.copy_from_slice(&[i as u8 * 10, 0, 0, 255]);
         }
         pm

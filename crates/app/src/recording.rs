@@ -295,7 +295,7 @@ mod tests {
 
     fn solid(w: u32, h: u32, v: u8) -> Pixmap {
         let mut pm = Pixmap::new(w, h).unwrap();
-        for p in pm.data_mut().chunks_exact_mut(4) {
+        for p in pm.data_mut().as_chunks_mut::<4>().0.iter_mut() {
             p.copy_from_slice(&[v, v, v, 255]);
         }
         pm

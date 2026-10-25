@@ -576,7 +576,7 @@ pub mod tests {
 
     fn gradient(w: u32, h: u32) -> Pixmap {
         let mut pm = Pixmap::new(w, h).unwrap();
-        for (i, p) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+        for (i, p) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let (x, y) = (i as u32 % w, i as u32 / w);
             p.copy_from_slice(&[(x % 251) as u8, (y % 251) as u8, 128, 255]);
         }

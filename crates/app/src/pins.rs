@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn halving_averages_and_scale_hits_the_requested_size() {
         let mut pm = Pixmap::new(4, 4).unwrap();
-        for (i, p) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+        for (i, p) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let v = if (i % 4 + i / 4) % 2 == 0 { 0 } else { 200 };
             p.copy_from_slice(&[v, v, v, 255]);
         }
