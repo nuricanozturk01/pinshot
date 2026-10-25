@@ -1,8 +1,11 @@
 //! Audio for MP4 recordings: system sound and/or microphone, captured to raw PCM files and muxed at the end.
 //!
-//! * Linux: ffmpeg's `pulse` input (PulseAudio and PipeWire): the default sink's monitor, and a microphone.
-//! * macOS: microphone through ffmpeg `avfoundation`; system sound through the bundled `pinshot-audiotap` helper
-//!   (ScreenCaptureKit, macOS 13+), or a virtual device such as BlackHole.
+//! None of this depends on what the bundled ffmpeg can capture (its static builds lack most input devices):
+//!
+//! * Linux: `parec` (PulseAudio and PipeWire) on the default sink's monitor and on a microphone; ffmpeg's `pulse`
+//!   input is only the fallback.
+//! * macOS: microphone through cpal (CoreAudio); system sound through the bundled `pinshot-audiotap` helper
+//!   (ScreenCaptureKit, macOS 13+), or a virtual device such as BlackHole read through cpal.
 //! * Windows: cpal (WASAPI): loopback of the default output, and a microphone.
 //!
 //! Every capture writes interleaved signed 16-bit little-endian PCM; the track records its rate and channel count.
@@ -296,59 +299,19 @@ fn ffmpeg_capture_cmd(exe: &Path, input: &[&str], out: &Path) -> Command {
 }
 
 // ---------------------------------------------------------------- macOS
-pub fn parse_avf_audio_devices(stderr: &str) -> Vec<(u32, String)> {
-    let mut out = Vec::new();
-    let mut in_audio = false;
-    for line in stderr.lines() {
-        if line.contains("AVFoundation audio devices") {
-            in_audio = true;
-        } else if line.contains("AVFoundation video devices") {
-            in_audio = false;
-        } else if in_audio {
-            if let (Some(a), Some(b)) = (line.find('['), line.rfind(']')) {
-                // the last "[n] name" on the line (the line starts with ffmpeg's own "[AVFoundation indev @ ...]")
-                if let Some(start) = line[..=b]
-                    .rmatches('[')
-                    .next()
-                    .map(|_| line[..=b].rfind('[').unwrap_or(a))
-                {
-                    if let Ok(i) = line[start + 1..b].parse::<u32>() {
-                        out.push((i, line[b + 1..].trim().to_string()));
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
 const VIRTUAL_HINTS: [&str; 4] = ["blackhole", "loopback", "soundflower", "multi-output"];
 
+/// A virtual audio device that can carry system sound (macOS before 13).
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(
+        dead_code,
+        reason = "only the macOS capture path looks for virtual devices"
+    )
+)]
 pub fn is_virtual(name: &str) -> bool {
     let n = name.to_lowercase();
     VIRTUAL_HINTS.iter().any(|h| n.contains(h)) || n.contains("aggregate")
-}
-
-#[cfg_attr(
-    not(target_os = "macos"),
-    expect(dead_code, reason = "used by the macOS capture path")
-)]
-fn avf_devices(exe: &Path) -> Vec<(u32, String)> {
-    let Ok(o) = Command::new(exe)
-        .args([
-            "-hide_banner",
-            "-f",
-            "avfoundation",
-            "-list_devices",
-            "true",
-            "-i",
-            "",
-        ])
-        .output()
-    else {
-        return Vec::new();
-    };
-    parse_avf_audio_devices(&String::from_utf8_lossy(&o.stderr))
 }
 
 #[cfg_attr(
@@ -380,9 +343,9 @@ fn audiotap_helper() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-// ---------------------------------------------------------------- Windows (cpal)
-#[cfg(windows)]
-mod win {
+// ---------------------------------------------------------------- Windows and macOS microphones (cpal)
+#[cfg(any(windows, target_os = "macos"))]
+mod native {
     use super::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{Device, SampleFormat};
@@ -516,8 +479,18 @@ mod win {
         }
     }
 
+    #[cfg(windows)]
     pub fn default_output() -> Option<Device> {
         cpal::default_host().default_output_device()
+    }
+
+    /// An input device that carries system sound (BlackHole and similar), for macOS before 13.
+    #[cfg(target_os = "macos")]
+    pub fn find_virtual_input() -> Option<Device> {
+        cpal::default_host()
+            .input_devices()
+            .ok()?
+            .find(|d| d.name().is_ok_and(|n| super::is_virtual(&n)))
     }
 
     pub fn find_mic(name: &str) -> Option<Device> {
@@ -538,8 +511,8 @@ mod win {
 // ---------------------------------------------------------------- the recorder
 enum Capturing {
     Child(ChildCapture),
-    #[cfg(windows)]
-    Cpal(win::Capture),
+    #[cfg(any(windows, target_os = "macos"))]
+    Cpal(native::Capture),
 }
 
 struct Source {
@@ -561,22 +534,10 @@ pub fn list_microphones(ffmpeg: Option<&Path>) -> Vec<String> {
         let _ = ffmpeg;
         pulse_mics().into_iter().map(|(_, d)| d).collect()
     }
-    #[cfg(target_os = "macos")]
-    {
-        ffmpeg
-            .map(|e| {
-                avf_devices(e)
-                    .into_iter()
-                    .filter(|(_, n)| !is_virtual(n))
-                    .map(|(_, n)| n)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         let _ = ffmpeg;
-        win::mic_names()
+        native::mic_names()
     }
 }
 
@@ -617,22 +578,17 @@ pub fn probe(ffmpeg: Option<&Path>) -> Probe {
         (false, "No system sound source found.".to_string())
     };
     #[cfg(target_os = "macos")]
-    let system = {
-        let virtual_dev = ffmpeg
-            .map(|e| avf_devices(e).iter().any(|(_, n)| is_virtual(n)))
-            .unwrap_or(false);
-        if audiotap_helper().is_some() || virtual_dev {
-            (true, String::new())
-        } else {
-            (
-                false,
-                "System sound needs macOS 13 or newer, or a virtual device such as BlackHole."
-                    .to_string(),
-            )
-        }
+    let system = if audiotap_helper().is_some() || native::find_virtual_input().is_some() {
+        (true, String::new())
+    } else {
+        (
+            false,
+            "System sound needs macOS 13 or newer, or a virtual device such as BlackHole."
+                .to_string(),
+        )
     };
     #[cfg(windows)]
-    let system = if win::default_output().is_some() {
+    let system = if native::default_output().is_some() {
         (true, String::new())
     } else {
         (false, "No output device found.".to_string())
@@ -714,67 +670,53 @@ impl AudioRecorder {
         }
         #[cfg(target_os = "macos")]
         {
-            let (cap, started) = if kind == "mic" {
-                let devs: Vec<_> = avf_devices(ffmpeg)
-                    .into_iter()
-                    .filter(|(_, n)| !is_virtual(n))
-                    .collect();
-                let pick = devs
-                    .iter()
-                    .find(|(_, n)| n == mic_device)
-                    .or_else(|| devs.first())
-                    .ok_or("no microphone found")?;
-                let idx = format!(":{}", pick.0);
-                ChildCapture::start(
-                    ffmpeg_capture_cmd(ffmpeg, &["-f", "avfoundation", "-i", &idx], &path),
-                    &path,
-                    None,
-                    Duration::from_secs(20),
-                )?
-            } else {
-                let helper_result = audiotap_helper().map(|h| {
-                    let mut c = Command::new(h);
-                    c.arg(&path);
-                    ChildCapture::start(c, &path, Some("started"), Duration::from_secs(15))
+            let _ = ffmpeg;
+            if kind == "mic" {
+                let dev = native::find_mic(mic_device).ok_or("no microphone found")?;
+                let cap = native::start(dev, false, &path)?;
+                let (rate, channels) = (cap.rate, cap.channels);
+                return Ok(Source {
+                    track: track(unix_now(), rate, channels),
+                    cap: Capturing::Cpal(cap),
                 });
-                match helper_result {
-                    Some(Ok(v)) => v,
-                    other => {
-                        let reason = match other {
-                            Some(Err(e)) => e,
-                            _ => "the system sound helper is missing".to_string(),
-                        };
-                        let dev = avf_devices(ffmpeg)
-                            .into_iter()
-                            .find(|(_, n)| is_virtual(n))
-                            .ok_or(reason)?;
-                        let idx = format!(":{}", dev.0);
-                        ChildCapture::start(
-                            ffmpeg_capture_cmd(ffmpeg, &["-f", "avfoundation", "-i", &idx], &path),
-                            &path,
-                            None,
-                            Duration::from_secs(20),
-                        )?
-                    }
+            }
+            let helper_result = audiotap_helper().map(|h| {
+                let mut c = Command::new(h);
+                c.arg(&path);
+                ChildCapture::start(c, &path, Some("started"), Duration::from_secs(15))
+            });
+            match helper_result {
+                Some(Ok((cap, started))) => Ok(Source {
+                    track: track(started, RATE, 2),
+                    cap: Capturing::Child(cap),
+                }),
+                other => {
+                    let reason = match other {
+                        Some(Err(e)) => e,
+                        _ => "the system sound helper is missing".to_string(),
+                    };
+                    let dev = native::find_virtual_input().ok_or(reason)?;
+                    let cap = native::start(dev, false, &path)?;
+                    let (rate, channels) = (cap.rate, cap.channels);
+                    Ok(Source {
+                        track: track(unix_now(), rate, channels),
+                        cap: Capturing::Cpal(cap),
+                    })
                 }
-            };
-            Ok(Source {
-                track: track(started, RATE, 2),
-                cap: Capturing::Child(cap),
-            })
+            }
         }
         #[cfg(windows)]
         {
             let _ = ffmpeg;
             let (dev, loopback) = if kind == "system" {
-                (win::default_output().ok_or("no output device")?, true)
+                (native::default_output().ok_or("no output device")?, true)
             } else {
                 (
-                    win::find_mic(mic_device).ok_or("no microphone found")?,
+                    native::find_mic(mic_device).ok_or("no microphone found")?,
                     false,
                 )
             };
-            let cap = win::start(dev, loopback, &path)?;
+            let cap = native::start(dev, loopback, &path)?;
             let (rate, channels) = (cap.rate, cap.channels);
             Ok(Source {
                 track: track(unix_now(), rate, channels),
@@ -787,8 +729,11 @@ impl AudioRecorder {
     pub fn request_stop(&mut self) {
         for s in &mut self.sources {
             #[cfg_attr(
-                not(windows),
-                expect(irrefutable_let_patterns, reason = "Cpal exists on Windows only")
+                not(any(windows, target_os = "macos")),
+                expect(
+                    irrefutable_let_patterns,
+                    reason = "Cpal exists on Windows and macOS only"
+                )
             )]
             if let Capturing::Child(c) = &mut s.cap {
                 c.request_stop();
@@ -802,7 +747,7 @@ impl AudioRecorder {
         for s in &mut self.sources {
             match &mut s.cap {
                 Capturing::Child(c) => c.stop(),
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "macos"))]
                 Capturing::Cpal(c) => c.stop(),
             }
             out.push(s.track.clone());
@@ -838,16 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_avfoundation_device_list() {
-        let text = "[AVFoundation indev @ 0x1] AVFoundation video devices:\n[AVFoundation indev @ 0x1] [0] FaceTime HD Camera\n[AVFoundation indev @ 0x1] AVFoundation audio devices:\n[AVFoundation indev @ 0x1] [0] MacBook Pro Microphone\n[AVFoundation indev @ 0x1] [1] BlackHole 2ch\n";
-        let d = parse_avf_audio_devices(text);
-        assert_eq!(
-            d,
-            vec![
-                (0, "MacBook Pro Microphone".to_string()),
-                (1, "BlackHole 2ch".to_string())
-            ]
-        );
+    fn virtual_audio_devices_are_recognised() {
         assert!(is_virtual("BlackHole 2ch") && !is_virtual("MacBook Pro Microphone"));
     }
 
