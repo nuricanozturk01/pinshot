@@ -9,7 +9,6 @@ on:
         "Cargo.toml",
         "Cargo.lock",
         "assets/**",
-        "tools/wayland_ci.sh",
         "rustfmt.toml",
         ".prettierrc.json",
         ".github/workflows/rust.yml",
@@ -22,7 +21,6 @@ on:
         "Cargo.toml",
         "Cargo.lock",
         "assets/**",
-        "tools/wayland_ci.sh",
         "rustfmt.toml",
         ".prettierrc.json",
         ".github/workflows/rust.yml",
@@ -91,28 +89,4 @@ jobs:
           ./target/debug/pinshot.exe --selftest || true
           ./target/debug/pinshot.exe --selftest-window
 
-  # Ubuntu 24.04+ sessions are Wayland: run the app in a headless sway (screenshots through grim).
-  wayland:
-    needs: lint
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    # Set to false once the job has passed on a few runs and should block merges.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Libraries and a headless Wayland session
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libx11-dev libxcb1-dev libdbus-1-dev ffmpeg \
-            sway swaybg xwayland grim dbus-x11 python3-pil
-      - run: cargo build -p pinshot
-      - name: PinShot under Wayland
-        run: tools/wayland_ci.sh target/debug/pinshot
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: wayland-out
-          path: wayland-out/
-          retention-days: 7
+  # The headless Wayland (sway) job lives in wayland.yml and runs on demand.
