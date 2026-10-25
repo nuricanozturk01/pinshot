@@ -18,7 +18,18 @@
 - **Pin to screen**: keep an image in an always-on-top window. Resize, fade, flip.
 - **OCR**: copy text out of an image. Runs offline; supports Turkish, English and other Latin-script languages.
 - **Screen recording**: MP4 or GIF, up to 60 fps, with system sound and microphone (MP4).
-- **Colour picker**: magnifier with the colour under the cursor.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/editor.png" alt="Selecting an area and marking it up with the toolbar" width="860">
+</p>
+
+<p align="center">
+  <img src="docs/images/settings.png" alt="Settings window" height="360">
+  &nbsp;
+  <img src="docs/images/about.png" alt="About window" height="360">
+</p>
 
 ## Install
 
@@ -66,7 +77,6 @@ Press the capture shortcut, drag over an area, draw if you like, then press `Ent
 | `V R E L A P H T N M B` | Select, rectangle, ellipse, line, arrow, pen, highlighter, text, number, mosaic, blur |
 | `Shift` while drawing   | Squares, circles, straight lines                                                      |
 | `Ctrl+Z` / `Ctrl+Y`     | Undo / redo                                                                           |
-| `C` before selecting    | Copy the colour under the cursor                                                      |
 | `Esc` / right-click     | Back / cancel                                                                         |
 
 On macOS, `Ctrl` here means `⌘ Command`.
