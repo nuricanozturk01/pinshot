@@ -498,11 +498,11 @@ mod imp {
             .map(|id| {
                 let d = CGDisplay::new(id);
                 let b = d.bounds();
-                let scale = if b.size.width > 0.0 {
-                    d.pixels_wide() as f32 / b.size.width as f32
-                } else {
-                    1.0
-                };
+                // `pixels_wide` reports points on Retina displays; the display mode knows the backing-store size
+                let scale = d
+                    .display_mode()
+                    .filter(|m| m.width() > 0)
+                    .map_or(1.0, |m| m.pixel_width() as f32 / m.width() as f32);
                 Monitor {
                     name: format!("display{id}"),
                     rect: Rect::new(
@@ -557,13 +557,73 @@ mod imp {
         Ok((w, h, out))
     }
 
-    /// Window picking is not implemented on macOS yet; area selection works as before.
+    /// On-screen application windows, top-most first, skipping this process's own.
     pub fn windows() -> Result<Vec<Rect>, String> {
-        Ok(Vec::new())
+        use core_foundation::base::{CFType, TCFType};
+        use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+        use core_foundation::number::CFNumber;
+        use core_foundation::string::CFString;
+        use core_graphics::window::{
+            copy_window_info, kCGNullWindowID, kCGWindowAlpha, kCGWindowBounds, kCGWindowLayer,
+            kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
+            kCGWindowOwnerPID,
+        };
+        type Dict = CFDictionary<CFString, CFType>;
+        let list = copy_window_info(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+            kCGNullWindowID,
+        )
+        .ok_or("window list unavailable")?;
+        // SAFETY: the keys are constant CFStrings owned by CoreGraphics; the get rule retains them.
+        let key = |k| unsafe { CFString::wrap_under_get_rule(k) };
+        let num = |d: &Dict, k: &CFString| {
+            d.find(k)
+                .and_then(|v| v.downcast::<CFNumber>())
+                .and_then(|n| n.to_f64())
+        };
+        let (layer, alpha, bounds, pid) = (
+            key(unsafe { kCGWindowLayer }),
+            key(unsafe { kCGWindowAlpha }),
+            key(unsafe { kCGWindowBounds }),
+            key(unsafe { kCGWindowOwnerPID }),
+        );
+        let me = f64::from(std::process::id());
+        let (kx, ky, kw, kh) = (
+            CFString::new("X"),
+            CFString::new("Y"),
+            CFString::new("Width"),
+            CFString::new("Height"),
+        );
+        let mut out = Vec::new();
+        for item in list.iter() {
+            // SAFETY: every element of the window list is a dictionary.
+            let d: Dict = unsafe { CFDictionary::wrap_under_get_rule(*item as CFDictionaryRef) };
+            if num(&d, &layer) != Some(0.0) || num(&d, &pid) == Some(me) {
+                continue; // menu bar, Dock, floating panels and our own windows
+            }
+            if num(&d, &alpha).is_some_and(|a| a < 0.05) {
+                continue;
+            }
+            let Some(raw) = d.find(&bounds).and_then(|v| v.downcast::<CFDictionary>()) else {
+                continue;
+            };
+            // SAFETY: the bounds dictionary maps strings to numbers; same object, typed view.
+            let b: Dict = unsafe { CFDictionary::wrap_under_get_rule(raw.as_concrete_TypeRef()) };
+            let (Some(x), Some(y), Some(w), Some(h)) =
+                (num(&b, &kx), num(&b, &ky), num(&b, &kw), num(&b, &kh))
+            else {
+                continue;
+            };
+            if w > 0.0 && h > 0.0 {
+                out.push(Rect::new(x as f32, y as f32, w as f32, h as f32));
+            }
+        }
+        Ok(out)
     }
 
+    /// The top-most ordinary window of another application is the one in front.
     pub fn active_window() -> Option<Rect> {
-        None
+        windows().ok()?.into_iter().next()
     }
 
     pub fn cursor_pos() -> Option<Point> {
@@ -724,7 +784,20 @@ pub fn grab_all() -> Result<Vec<Capture>, String> {
     }
     let mons = monitors()?;
     mons.into_iter()
-        .map(|m| grab(&m).map(|pixmap| Capture { monitor: m, pixmap }))
+        .map(|mut m| {
+            let pixmap = grab(&m)?;
+            // trust the picture over the reported scale: a wrong scale crops a fraction of the screen
+            let real = pixmap.width() as f32 / m.rect.w.max(1.0);
+            if (real - m.scale).abs() > 0.05 {
+                log::warn!(
+                    "monitor {}: scale {} but the image says {real}",
+                    m.name,
+                    m.scale
+                );
+                m.scale = real;
+            }
+            Ok(Capture { monitor: m, pixmap })
+        })
         .collect()
 }
 

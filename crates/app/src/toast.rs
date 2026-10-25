@@ -17,6 +17,10 @@ pub struct Toast {
     pub sw: SoftWindow,
     /// The painted notification: shown again whenever the compositor asks for the window's content.
     pm: Pixmap,
+    text: String,
+    area: Rect,
+    /// Scale factor `pm` was painted for.
+    sf: f32,
     pub deadline: Instant,
     /// Command to run when the toast is clicked.
     pub click: Option<&'static str>,
@@ -65,11 +69,59 @@ pub fn paint(text: &str, sf: f32) -> Pixmap {
     pm
 }
 
+/// Bottom-right corner of `area` for a toast of `w`×`h` pixels (desktop units: pixels, points on macOS).
+fn place(area: Rect, w: u32, h: u32, sf: f32) -> winit::dpi::Position {
+    let u = if cfg!(target_os = "macos") {
+        1.0 / sf
+    } else {
+        1.0
+    }; // desktop units per pixel
+    crate::gfx::win_pos(
+        area.right() - (w as f32 + 24.0 * sf) * u,
+        area.bottom() - (h as f32 + 64.0 * sf) * u,
+    )
+}
+
 impl Toast {
     /// Paint the notification again (expose events, the first frame after the window appears).
     pub fn redraw(&mut self) {
+        // the monitor lookup can be wrong (mixed scale factors): trust the window's own scale
+        let real = self.sw.window.scale_factor() as f32;
+        if (real - self.sf).abs() > 0.01 {
+            self.sf = real;
+            self.pm = paint(&self.text, real);
+            let (w, h) = (self.pm.width(), self.pm.height());
+            let _ = self
+                .sw
+                .window
+                .request_inner_size(crate::gfx::size_px(w as f32, h as f32, real));
+            self.sw
+                .window
+                .set_outer_position(place(self.area, w, h, real));
+        }
         self.sw.sync_size();
-        if let Err(e) = self.sw.present(&self.pm, (0, 0)) {
+        let (ww, wh) = self.sw.size();
+        let result = if (ww, wh) == (self.pm.width(), self.pm.height()) {
+            self.sw.present(&self.pm, (0, 0)).map(|_| ())
+        } else {
+            // the window is not the size of the picture (yet): never show unpainted pixels
+            match Pixmap::new(ww, wh) {
+                Some(mut full) => {
+                    full.fill(tiny_skia::Color::from_rgba8(0x1e, 0x1e, 0x21, 255));
+                    full.draw_pixmap(
+                        0,
+                        0,
+                        self.pm.as_ref(),
+                        &tiny_skia::PixmapPaint::default(),
+                        tiny_skia::Transform::identity(),
+                        None,
+                    );
+                    self.sw.present(&full, (0, 0)).map(|_| ())
+                }
+                None => Ok(()),
+            }
+        };
+        if let Err(e) = result {
             log::warn!("toast redraw: {e}");
         }
     }
@@ -86,15 +138,7 @@ impl Toast {
     ) -> Result<Toast, String> {
         let pm = paint(text, sf);
         let (w, h) = (pm.width(), pm.height());
-        let u = if cfg!(target_os = "macos") {
-            1.0 / sf
-        } else {
-            1.0
-        }; // desktop units per pixel
-        let pos = crate::gfx::win_pos(
-            area.right() - (w as f32 + 24.0 * sf) * u,
-            area.bottom() - (h as f32 + 64.0 * sf) * u,
-        );
+        let pos = place(area, w, h, sf);
         let attrs = Window::default_attributes()
             .with_title("PinShot")
             .with_decorations(false)
@@ -117,6 +161,9 @@ impl Toast {
         Ok(Toast {
             sw,
             pm,
+            text: text.to_string(),
+            area,
+            sf,
             deadline: Instant::now() + Duration::from_secs(secs),
             click,
         })

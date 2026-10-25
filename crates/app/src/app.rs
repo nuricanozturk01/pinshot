@@ -174,11 +174,7 @@ impl App {
             .and_then(|p| screens::monitor_at(&mons, p))
             .and_then(|i| mons.get(i).cloned());
         let Some(m) = at else { return };
-        let sf = el
-            .available_monitors()
-            .find(|h| h.position().x == m.rect.x as i32 && h.position().y == m.rect.y as i32)
-            .map(|h| h.scale_factor() as f32)
-            .unwrap_or(1.0);
+        let sf = monitor_scale(el, &m.rect);
         let secs = if click.is_empty() { 4 } else { 8 };
         match Toast::show(
             el,
@@ -216,16 +212,7 @@ impl App {
         let mons = screens::monitors().unwrap_or_default();
         let m = screens::monitor_at(&mons, p).and_then(|i| mons.get(i).cloned());
         match m {
-            Some(m) => {
-                let sf = el
-                    .available_monitors()
-                    .find(|h| {
-                        h.position().x == m.rect.x as i32 && h.position().y == m.rect.y as i32
-                    })
-                    .map(|h| h.scale_factor() as f32)
-                    .unwrap_or(1.0);
-                (sf, m.rect)
-            }
+            Some(m) => (monitor_scale(el, &m.rect), m.rect),
             None => (1.0, Rect::new(0.0, 0.0, 1920.0, 1080.0)),
         }
     }
@@ -2170,6 +2157,22 @@ impl ApplicationHandler<UserEvent> for App {
             None => ControlFlow::Wait,
         });
     }
+}
+
+/// Scale factor of the winit monitor that sits at `rect` (desktop units: physical pixels, but points on macOS where
+/// winit reports physical positions, so those are converted before comparing).
+fn monitor_scale(el: &ActiveEventLoop, rect: &Rect) -> f32 {
+    el.available_monitors()
+        .find(|h| {
+            let k = if cfg!(target_os = "macos") {
+                h.scale_factor() as f32
+            } else {
+                1.0
+            };
+            let p = h.position();
+            (p.x as f32 / k - rect.x).abs() < 1.5 && (p.y as f32 / k - rect.y).abs() < 1.5
+        })
+        .map_or(1.0, |h| h.scale_factor() as f32)
 }
 
 /// winit's X11 backend panics when `libxkbcommon-x11` is missing, so only pick it when the library loads.
