@@ -84,7 +84,7 @@ impl X {
             .reply()
             .unwrap();
         let mut out = image::RgbImage::new(w as u32, h as u32);
-        for (i, p) in img.data.chunks_exact(4).enumerate() {
+        for (i, p) in img.data.as_chunks::<4>().0.iter().enumerate() {
             out.put_pixel(
                 i as u32 % w as u32,
                 i as u32 / w as u32,

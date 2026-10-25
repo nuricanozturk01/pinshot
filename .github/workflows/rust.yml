@@ -3,9 +3,29 @@ name: Rust
 on:
   push:
     branches: [rust]
-    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "assets/**", "tools/wayland_ci.sh", ".github/workflows/rust.yml"]
+    paths:
+      [
+        "crates/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "assets/**",
+        "tools/wayland_ci.sh",
+        "rustfmt.toml",
+        ".prettierrc.json",
+        ".github/workflows/rust.yml",
+      ]
   pull_request:
-    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "assets/**", "tools/wayland_ci.sh", ".github/workflows/rust.yml"]
+    paths:
+      [
+        "crates/**",
+        "Cargo.toml",
+        "Cargo.lock",
+        "assets/**",
+        "tools/wayland_ci.sh",
+        "rustfmt.toml",
+        ".prettierrc.json",
+        ".github/workflows/rust.yml",
+      ]
 
 permissions:
   contents: read
@@ -30,6 +50,11 @@ jobs:
       - name: Linux libraries
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libx11-dev libxcb1-dev libdbus-1-dev
       - run: cargo fmt --all --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prettier (workflows and docs of the Rust edition)
+        run: npx --yes prettier@3 --check .
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:

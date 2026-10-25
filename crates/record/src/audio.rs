@@ -50,7 +50,7 @@ pub fn file_peak(path: &Path) -> i32 {
         if n == 0 {
             break;
         }
-        for s in buf[..n / 2 * 2].chunks_exact(2) {
+        for s in buf[..n / 2 * 2].as_chunks::<2>().0 {
             peak = peak.max((i16::from_le_bytes([s[0], s[1]]) as i32).abs());
         }
     }

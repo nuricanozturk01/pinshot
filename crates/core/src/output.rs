@@ -51,7 +51,7 @@ pub fn from_rgba8(w: u32, h: u32, rgba: &[u8]) -> Option<Pixmap> {
     if rgba.len() != (w * h * 4) as usize {
         return None;
     }
-    for (dst, src) in pm.pixels_mut().iter_mut().zip(rgba.chunks_exact(4)) {
+    for (dst, src) in pm.pixels_mut().iter_mut().zip(rgba.as_chunks::<4>().0) {
         *dst = tiny_skia::ColorU8::from_rgba(src[0], src[1], src[2], src[3]).premultiply();
     }
     Some(pm)
@@ -76,7 +76,12 @@ pub fn save_image(pm: &Pixmap, path: &Path, quality: u8) -> Result<(), String> {
         let out = BufWriter::new(file);
         match ext.as_str() {
             "jpg" | "jpeg" => {
-                let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(flatten_on_white).collect();
+                let rgb: Vec<u8> = rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(flatten_on_white)
+                    .collect();
                 JpegEncoder::new_with_quality(out, quality.clamp(1, 100))
                     .write_image(&rgb, w, h, ExtendedColorType::Rgb8)
                     .map_err(|e| e.to_string())
@@ -99,7 +104,7 @@ pub fn save_image(pm: &Pixmap, path: &Path, quality: u8) -> Result<(), String> {
     }
 }
 
-fn flatten_on_white(p: &[u8]) -> [u8; 3] {
+fn flatten_on_white(p: &[u8; 4]) -> [u8; 3] {
     let a = p[3] as u32;
     let f = |c: u8| ((c as u32 * a + 255 * (255 - a)) / 255) as u8;
     [f(p[0]), f(p[1]), f(p[2])]

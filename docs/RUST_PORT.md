@@ -18,6 +18,7 @@ Written but **not run on real hardware** (CI compiles them): Windows capture/aud
 (CoreGraphics, avfoundation, audiotap helper), tray-icon on Windows/macOS.
 
 ### Next steps
+
 1. Real-device checks: Windows and macOS (capture, system sound, permissions, installers), Wayland portal capture on a
    real Wayland session (the portal path was only exercised on X11 by forcing `XDG_SESSION_TYPE=wayland`), folder picker
    and autostart in the settings window. Screen recording on Wayland still uses X11 grabs (needs PipeWire).
@@ -33,16 +34,16 @@ release workflow.
 
 ## Architecture
 
-| Layer | Crate / library | Status |
-|---|---|---|
-| Logic without a window system: geometry, annotations, editor state machine, undo/redo, rendering (tiny-skia), text, composition, config, shortcuts, i18n, pin geometry | `crates/core` | **done** |
-| OCR (PP-OCRv4 via tract) | `crates/ocr` | **done** |
-| Recording (ffmpeg pipeline, audio) | `crates/record` | **done** |
-| Widget kit drawn in software (buttons, sliders, toolbar) | `crates/ui` (winit + softbuffer) | planned |
-| Screens, hotkeys, tray, clipboard, dialogs, autostart, single instance | `crates/platform` | planned |
-| OCR (PP-OCR ONNX models through `ort`) | `crates/ocr` | planned |
-| Recording (ffmpeg sidecar), audio (cpal / platform helpers), island | `crates/record` | planned |
-| The application | `crates/app` (`pinshot` binary) | planned |
+| Layer                                                                                                                                                                  | Crate / library                  | Status   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | -------- |
+| Logic without a window system: geometry, annotations, editor state machine, undo/redo, rendering (tiny-skia), text, composition, config, shortcuts, i18n, pin geometry | `crates/core`                    | **done** |
+| OCR (PP-OCRv4 via tract)                                                                                                                                               | `crates/ocr`                     | **done** |
+| Recording (ffmpeg pipeline, audio)                                                                                                                                     | `crates/record`                  | **done** |
+| Widget kit drawn in software (buttons, sliders, toolbar)                                                                                                               | `crates/ui` (winit + softbuffer) | planned  |
+| Screens, hotkeys, tray, clipboard, dialogs, autostart, single instance                                                                                                 | `crates/platform`                | planned  |
+| OCR (PP-OCR ONNX models through `ort`)                                                                                                                                 | `crates/ocr`                     | planned  |
+| Recording (ffmpeg sidecar), audio (cpal / platform helpers), island                                                                                                    | `crates/record`                  | planned  |
+| The application                                                                                                                                                        | `crates/app` (`pinshot` binary)  | planned  |
 
 ## Phases
 

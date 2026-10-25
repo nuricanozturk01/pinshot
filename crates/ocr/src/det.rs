@@ -89,7 +89,7 @@ impl Detector {
         };
         // BGR order, (x/255 - 0.5)/0.5
         let mut data = vec![0f32; 3 * th * tw];
-        for (i, px) in resized.chunks_exact(3).enumerate() {
+        for (i, px) in resized.as_chunks::<3>().0.iter().enumerate() {
             for (c, src) in [2usize, 1, 0].into_iter().enumerate() {
                 data[c * th * tw + i] = (px[src] as f32 / 255.0 - 0.5) / 0.5;
             }

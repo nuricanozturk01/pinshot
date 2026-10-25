@@ -61,8 +61,13 @@ pub fn pixmap_from_bgrx(w: u32, h: u32, stride: usize, data: &[u8]) -> Option<Pi
     for y in 0..h as usize {
         let src = &data[y * stride..y * stride + w as usize * 4];
         let out = &mut dst[y * w as usize * 4..(y + 1) * w as usize * 4];
-        for (o, s) in out.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-            o.copy_from_slice(&[s[2], s[1], s[0], 255]);
+        for (o, s) in out
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(src.as_chunks::<4>().0)
+        {
+            *o = [s[2], s[1], s[0], 255];
         }
     }
     Some(pm)

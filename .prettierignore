@@ -1,0 +1,9 @@
+# Prettier only formats the Rust edition's YAML/Markdown/JSON; everything else is left alone.
+*
+!.github/
+!.github/workflows/
+!.github/workflows/rust.yml
+!.github/workflows/rust-release.yml
+!docs/
+!docs/RUST_PORT.md
+!.prettierrc.json

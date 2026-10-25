@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Formats staged Rust and YAML/Markdown files before each commit. Enable once: tools/fmt.sh --install-hook
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+if git diff --cached --name-only | grep -q '\.rs$'; then
+  cargo fmt --all
+  git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' | xargs -r git add
+fi

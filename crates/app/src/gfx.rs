@@ -160,7 +160,7 @@ impl SoftWindow {
         for row in 0..ch {
             let s = &src[row * pm.width() as usize * 4..];
             let d = &mut buf[(y0 + row) * ww as usize + x0..][..cw];
-            for (px, c) in d.iter_mut().zip(s.chunks_exact(4)) {
+            for (px, c) in d.iter_mut().zip(s.as_chunks::<4>().0) {
                 *px = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
             }
         }
@@ -187,7 +187,7 @@ impl SoftWindow {
         for row in 0..ch {
             let s = &pm.data()[row * pm.width() as usize * 4..];
             let d = &mut buf[row * ww as usize..][..cw];
-            for (px, c) in d.iter_mut().zip(s.chunks_exact(4)) {
+            for (px, c) in d.iter_mut().zip(s.as_chunks::<4>().0) {
                 *px = (c[3] as u32) << 24 | (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
             }
         }

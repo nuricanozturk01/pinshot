@@ -32,11 +32,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: "Linux amd64",   runner: ubuntu-22.04,     arch: amd64 }
-          - { name: "Linux arm64",   runner: ubuntu-24.04-arm, arch: arm64 }
-          - { name: "Windows amd64", runner: windows-latest,   arch: amd64 }
-          - { name: "macOS arm64",   runner: macos-15,         arch: arm64 }
-          - { name: "macOS amd64",   runner: macos-15-intel,   arch: amd64 }
+          - { name: "Linux amd64", runner: ubuntu-22.04, arch: amd64 }
+          - { name: "Linux arm64", runner: ubuntu-24.04-arm, arch: arm64 }
+          - { name: "Windows amd64", runner: windows-latest, arch: amd64 }
+          - { name: "macOS arm64", runner: macos-15, arch: arm64 }
+          - { name: "macOS amd64", runner: macos-15-intel, arch: amd64 }
     defaults:
       run:
         shell: bash

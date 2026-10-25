@@ -8,7 +8,7 @@ edition = "2021"
 license = "MIT"
 authors = ["Nuri Can OZTURK"]
 repository = "https://github.com/nuricanozturk01/pinshot"
-rust-version = "1.80"
+rust-version = "1.88"
 
 [workspace.dependencies]
 tiny-skia = "0.11"
