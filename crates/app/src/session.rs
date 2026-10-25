@@ -241,18 +241,40 @@ impl Session {
         IRect::new(0, 0, g.size.0, (60.0 * g.sf) as u32)
     }
 
+    /// While an annotation is being drawn or moved only its surroundings change, not the whole selection.
+    fn active_item_px(&self, g: &Geom) -> Option<IRect> {
+        use pinshot_core::editor::Mode;
+        let it = match self.editor.mode {
+            Mode::Draw => self.editor.cur.as_ref(),
+            Mode::ItemMove | Mode::ItemHandle => self.editor.selected_item(),
+            _ => None,
+        }?;
+        let b = annotate::Item::bounds(it, Fonts::embedded());
+        let (a, c) = (
+            self.to_px(g.mon, b.top_left()),
+            self.to_px(g.mon, Point::new(b.right(), b.bottom())),
+        );
+        let r = Rect::from_points(a, c);
+        // room for the stroke width, arrow heads, the selection outline and its handles
+        Some(IRect::around(r.x, r.y, r.w, r.h).inflate((24.0 * g.sf) as i32))
+    }
+
     pub fn extent(&self, g: &Geom) -> Option<IRect> {
         let mut ext: Option<IRect> = None;
         let mut add = |r: IRect| ext = Some(ext.map_or(r, |e| e.union(&r)));
         let full = IRect::new(0, 0, g.size.0, g.size.1);
-        if let Some(s) = self.sel_px(g.mon) {
+        let drawing = self.active_item_px(g);
+        if let Some(r) = drawing {
+            add(r);
+        } else if let Some(s) = self.sel_px(g.mon) {
             add(IRect::around(s.x, s.y, s.w, s.h).inflate((44.0 * g.sf) as i32));
         }
-        if let (Some(o), Some(p)) = (self.panel_origin(g), self.rec.as_ref()) {
+        // the toolbar and panel do not change while an annotation is drawn: leaving them out keeps the redrawn area small
+        if let (Some(o), Some(p), None) = (self.panel_origin(g), self.rec.as_ref(), drawing) {
             let (w, h) = p.size();
             add(IRect::around(o.x * g.sf, o.y * g.sf, w * g.sf, h * g.sf).inflate(4));
         }
-        if let Some(o) = self.toolbar_origin(g) {
+        if let Some(o) = self.toolbar_origin(g).filter(|_| drawing.is_none()) {
             let (w, h) = self.toolbar.size();
             add(IRect::around(o.x * g.sf, o.y * g.sf, w * g.sf, h * g.sf + 40.0 * g.sf).inflate(4));
         }
@@ -350,7 +372,11 @@ impl Session {
     }
 
     fn draw_selection_content(&self, cv: &mut Canvas, cap: &Capture, vis: Rect, damage: IRect) {
-        let region = IRect::around(vis.x, vis.y, vis.w, vis.h);
+        // only the part of the selection inside the redrawn area: cropping and rendering all of it for every
+        // frame of a small change is what makes drawing on a big selection feel slow
+        let Some(region) = IRect::around(vis.x, vis.y, vis.w, vis.h).intersect(&damage) else {
+            return;
+        };
         let Some(mut sub) = crop(&cap.pixmap, region) else {
             return;
         };
@@ -711,6 +737,52 @@ pub mod tests {
             }
         }
         assert!(differing <= 3, "{differing} pixels differ");
+    }
+
+    /// Draw one frame of an annotation the way the overlay does: only the area that changed since the last frame.
+    #[test]
+    fn drawing_redraws_only_around_the_item_and_matches_a_full_frame() {
+        let mut s = session();
+        s.cursor = None;
+        let m = &crate::screens::tests_support::NoMeasure;
+        drag(&mut s, (20.0, 20.0), (380.0, 280.0));
+        s.editor.set_tool(Tool::Draw(Kind::Rect), m);
+        let g = geom(0);
+        let all = IRect::new(0, 0, 400, 300);
+        s.editor.press(Point::new(100.0, 100.0), Button::Left, m);
+        s.editor.moved(Point::new(140.0, 130.0), false);
+        let mut shown = s.compose(&g, all);
+        let prev = s.extent(&g).unwrap();
+        s.editor.moved(Point::new(190.0, 170.0), false);
+        let cur = s.extent(&g).unwrap();
+        let damage = prev.union(&cur);
+        assert!(
+            damage.w < 300 && damage.h < 250,
+            "not the whole selection: {damage:?}"
+        );
+        let part = s.compose(&g, damage);
+        shown.draw_pixmap(
+            damage.x,
+            damage.y,
+            part.as_ref(),
+            &PixmapPaint {
+                blend_mode: tiny_skia::BlendMode::Source,
+                ..PixmapPaint::default()
+            },
+            Transform::identity(),
+            None,
+        );
+        let full = s.compose(&g, all);
+        let differing = (0..300)
+            .flat_map(|y| (0..400).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let (a, b) = (px(&shown, x, y), px(&full, x, y));
+                a.iter()
+                    .zip(b)
+                    .any(|(p, q)| (*p as i32 - q as i32).abs() > 4)
+            })
+            .count();
+        assert_eq!(differing, 0, "{differing} pixels differ from a full redraw");
     }
 
     #[test]

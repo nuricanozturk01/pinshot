@@ -77,6 +77,9 @@ struct OverlayWin {
     hint: bool,
     /// The window outline shown in the last frame (its undimmed area changes only when this does).
     hover_win: Option<Rect>,
+    /// Areas drawn by the latest frames (newest last): a swap-chain buffer that is older than the last frame also
+    /// needs what those changed.
+    history: Vec<IRect>,
     shown: bool,
 }
 
@@ -388,6 +391,7 @@ impl App {
                                 full: true,
                                 hint: true,
                                 hover_win: None,
+                                history: Vec::new(),
                                 shown: false,
                             });
                         }
@@ -561,15 +565,35 @@ impl App {
                 Some(moved.map_or(strip, |m| m.union(&strip)))
             }
         };
-        let Some(d) = damage.and_then(|d| d.intersect(&full)) else {
+        let Some(mut d) = damage.and_then(|d| d.intersect(&full)) else {
             return;
         };
+        if d != full {
+            // buffers rotate on some systems (macOS, Wayland): bring an older buffer up to date, or redraw all
+            let age = usize::from(w.sw.buffer_age());
+            d = match age {
+                1 => d,
+                2..=4 if w.history.len() >= age - 1 => w.history[w.history.len() - (age - 1)..]
+                    .iter()
+                    .fold(d, |acc, h| acc.union(h))
+                    .intersect(&full)
+                    .unwrap_or(full),
+                _ => full,
+            };
+        }
         let cursor_here = screens::cursor_pos()
             .map(|p| ov.session.caps[g.mon].monitor.rect.contains(p))
             .unwrap_or(win == 0);
         let pm = ov.session.compose(&g, d);
-        match w.sw.present(&pm, (d.x, d.y)) {
+        match w.sw.present_covering(&pm, (d.x, d.y)).map(|()| true) {
             Ok(true) => {
+                if d == full {
+                    w.history.clear();
+                }
+                w.history.push(d);
+                if w.history.len() > 4 {
+                    w.history.remove(0);
+                }
                 w.prev = cur;
                 w.hint = hint;
                 w.hover_win = hover_win;

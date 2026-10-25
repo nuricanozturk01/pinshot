@@ -166,10 +166,26 @@ impl SoftWindow {
     /// contents are unknown and the pixmap does not cover the whole window, returns `false` and draws nothing:
     /// the caller must then redraw everything.
     pub fn present(&mut self, pm: &Pixmap, at: (i32, i32)) -> Result<bool, String> {
+        self.present_at(pm, at, true)
+    }
+
+    /// How many presents ago the buffer the next frame goes into was shown: 1 = the last frame, 2 = the one before
+    /// (double buffering), 0 = its contents are unknown.
+    pub fn buffer_age(&mut self) -> u8 {
+        self.surface.buffer_mut().map_or(0, |b| b.age())
+    }
+
+    /// Like [`present`](Self::present), but the caller has looked at [`buffer_age`](Self::buffer_age) and covers
+    /// everything that changed since that buffer was last shown, so a partial pixmap is always accepted.
+    pub fn present_covering(&mut self, pm: &Pixmap, at: (i32, i32)) -> Result<(), String> {
+        self.present_at(pm, at, false).map(|_| ())
+    }
+
+    fn present_at(&mut self, pm: &Pixmap, at: (i32, i32), check_age: bool) -> Result<bool, String> {
         let (ww, wh) = self.size;
         let full = at == (0, 0) && pm.width() >= ww && pm.height() >= wh;
         let mut buf = self.surface.buffer_mut().map_err(|e| e.to_string())?;
-        if !full && buf.age() != 1 {
+        if check_age && !full && buf.age() != 1 {
             return Ok(false);
         }
         let x0 = at.0.max(0) as usize;
