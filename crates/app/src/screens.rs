@@ -201,7 +201,8 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use super::*;
-    use windows::Win32::Foundation::{BOOL, LPARAM, POINT, RECT};
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 

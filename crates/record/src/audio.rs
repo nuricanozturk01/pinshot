@@ -6,6 +6,13 @@
 //! * Windows: cpal (WASAPI): loopback of the default output, and a microphone.
 //!
 //! Every capture writes interleaved signed 16-bit little-endian PCM; the track records its rate and channel count.
+#![cfg_attr(
+    windows,
+    allow(
+        dead_code,
+        reason = "the child-process capture programs are used on Linux and macOS; Windows uses cpal"
+    )
+)]
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -227,6 +234,10 @@ pub fn pulse_system_source() -> Option<String> {
     Some(format!("{sink}.monitor"))
 }
 
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "PulseAudio is Linux only")
+)]
 fn pulse_default_mic(mics: &[(String, String)]) -> Option<String> {
     let def = pactl(&["get-default-source"]).filter(|s| !s.is_empty() && !s.ends_with(".monitor"));
     def.filter(|d| mics.iter().any(|(n, _)| n == d))
