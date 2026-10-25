@@ -529,7 +529,9 @@ pub fn crop(src: &Pixmap, region: IRect) -> Option<Pixmap> {
 /// `src` darkened by the dimming layer, restricted to `area`, into `out` (which has the size of `area`).
 pub fn dim_copy(src: &Pixmap, area: IRect, out: &mut Pixmap) {
     let keep = 255 - DIM_ALPHA;
-    let lut: [u8; 256] = std::array::from_fn(|v| ((v as u32 * keep + 127) / 255) as u8);
+    // x * keep / 255 as a multiply and a shift, which the compiler vectorises (a table lookup per channel does not)
+    let k = (keep * 256 + 127) / 255;
+    let dim = |v: u8| ((u32::from(v) * k) >> 8) as u8;
     let (sw, sh) = (src.width() as i64, src.height() as i64);
     let dw = out.width() as usize;
     // the part of `area` that lies inside the source, per row
@@ -554,12 +556,7 @@ pub fn dim_copy(src: &Pixmap, area: IRect, out: &mut Pixmap) {
             .iter_mut()
             .zip(s.as_chunks::<4>().0)
         {
-            *d4 = [
-                lut[s4[0] as usize],
-                lut[s4[1] as usize],
-                lut[s4[2] as usize],
-                255,
-            ];
+            *d4 = [dim(s4[0]), dim(s4[1]), dim(s4[2]), 255];
         }
     }
 }

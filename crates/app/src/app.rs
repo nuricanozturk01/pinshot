@@ -2146,13 +2146,18 @@ impl ApplicationHandler<UserEvent> for App {
 /// winit's X11 backend panics when `libxkbcommon-x11` is missing, so only pick it when the library loads.
 #[cfg(target_os = "linux")]
 fn x11_keyboard_support() -> bool {
-    ["libxkbcommon-x11.so.0", "libxkbcommon-x11.so"].iter().any(|n| {
-        // SAFETY: loading the library runs its (trivial) initialisers; the handle is dropped right away.
-        #[expect(unsafe_code, reason = "dlopen probe, nothing from the library is called")]
-        unsafe {
-            libloading::Library::new(n).is_ok()
-        }
-    })
+    ["libxkbcommon-x11.so.0", "libxkbcommon-x11.so"]
+        .iter()
+        .any(|n| {
+            // SAFETY: loading the library runs its (trivial) initialisers; the handle is dropped right away.
+            #[expect(
+                unsafe_code,
+                reason = "dlopen probe, nothing from the library is called"
+            )]
+            unsafe {
+                libloading::Library::new(n).is_ok()
+            }
+        })
 }
 
 pub fn run(first_command: Option<String>) -> Result<(), String> {
