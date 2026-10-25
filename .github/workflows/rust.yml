@@ -91,7 +91,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libx11-dev libxcb1-dev libdbus-1-dev ffmpeg \
-            sway xwayland grim xdg-desktop-portal xdg-desktop-portal-wlr dbus-x11 python3-pil
+            sway xwayland grim xdg-desktop-portal xdg-desktop-portal-wlr dbus-x11 pipewire python3-pil
       - run: cargo build -p pinshot
       - name: PinShot under Wayland
         run: tools/wayland_ci.sh target/debug/pinshot

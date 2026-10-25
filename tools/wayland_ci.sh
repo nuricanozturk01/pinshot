@@ -62,6 +62,10 @@ export DISPLAY=:9
 wait_for "xwayland" test -S /tmp/.X11-unix/X9
 
 eval "$(dbus-launch --sh-syntax)"
+# xdg-desktop-portal-wlr connects to PipeWire at start-up (even for plain screenshots)
+start pipewire pipewire
+wait_for "the PipeWire socket" test -S "$XDG_RUNTIME_DIR/pipewire-0"
+
 for p in /usr/libexec/xdg-desktop-portal-wlr /usr/lib/xdg-desktop-portal-wlr; do
   [ -x "$p" ] && start portal-wlr "$p" && break
 done
