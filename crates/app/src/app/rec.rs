@@ -14,8 +14,16 @@ pub struct RecUi {
     pub shared: SharedRect,
 }
 
+/// What was asked while the recorder was still starting.
+#[derive(Clone, Copy)]
+pub enum Abort {
+    Stop,
+    Cancel,
+}
+
 pub struct Recording {
-    pub recorder: Recorder,
+    /// `None` while the recorder is still starting up (opening audio devices can take seconds).
+    pub recorder: Option<Recorder>,
     pub ui: RecUi,
     pub clip_before: u64,
 }
@@ -203,22 +211,7 @@ impl App {
             mic_device: c.mic_device.clone(),
             out: out.clone(),
         };
-        let proxy = self.proxy.clone();
         let clip_before = clip_fingerprint(&mut self.clip);
-        let started = Recorder::start(
-            opts,
-            move || src.grab(),
-            move |e| {
-                let _ = proxy.send_event(UserEvent::Rec(e));
-            },
-        );
-        let recorder = match started {
-            Ok(r) => r,
-            Err(e) => {
-                log::error!("recording failed to start: {e}");
-                return self.toast(el, &format!("{}: {e}", tr("Kayıt başlatılamadı")));
-            }
-        };
         // windows: the frame and the island, on the monitors holding the area
         let involved: Vec<Rect> = mons
             .iter()
@@ -256,14 +249,25 @@ impl App {
         );
         let ctx = self.ctx.as_ref().expect("ctx");
         let Ok(island) = Island::show(el, ctx, at, sf, label) else {
-            let mut r = recorder;
-            r.cancel();
             return self.toast(el, tr("Kayıt penceresi açılamadı"));
         };
         self.owners.insert(island.sw.window.id(), Owner::Island);
         *shared.lock().expect("island rect") = Some(island.rect());
+        // the window shows at once; the recorder starts in the background (device start-up can take seconds)
+        let (proxy, started_proxy) = (self.proxy.clone(), self.proxy.clone());
+        std::thread::spawn(move || {
+            let started = Recorder::start(
+                opts,
+                move || src.grab(),
+                move |e| {
+                    let _ = proxy.send_event(UserEvent::Rec(e));
+                },
+            );
+            let _ = started_proxy.send_event(UserEvent::RecorderStarted(started.map(Box::new)));
+        });
+        self.start_abort = None;
         self.recording = Some(Recording {
-            recorder,
+            recorder: None,
             ui: RecUi {
                 frame,
                 island,
@@ -281,7 +285,10 @@ impl App {
         let Some(mut r) = self.recording.take() else {
             return;
         };
-        r.recorder.stop(); // first stop capturing, so nothing shown afterwards can appear in the video
+        match r.recorder.as_mut() {
+            Some(rec) => rec.stop(), // first stop capturing, so nothing shown afterwards can appear in the video
+            None => self.start_abort = Some(Abort::Stop), // still starting: stop it as soon as it is up
+        }
         *r.ui.shared.lock().expect("island rect") = None;
         self.owners.remove(&r.ui.island.sw.window.id());
         drop(r.ui);
@@ -296,7 +303,37 @@ impl App {
         if let Some(mut r) = self.recording.take() {
             *r.ui.shared.lock().expect("island rect") = None;
             self.owners.remove(&r.ui.island.sw.window.id());
-            r.recorder.cancel();
+            match r.recorder.as_mut() {
+                Some(rec) => rec.cancel(),
+                None => self.start_abort = Some(Abort::Cancel),
+            }
+        }
+    }
+
+    /// The background start of the recorder finished.
+    pub(super) fn recorder_started(
+        &mut self,
+        el: &ActiveEventLoop,
+        started: Result<Box<Recorder>, String>,
+    ) {
+        let abort = self.start_abort.take();
+        match started {
+            Err(e) => {
+                log::error!("recording failed to start: {e}");
+                // the island is up already: take it down again
+                self.recording = None;
+                self.rec_finalizing = None;
+                if let Some(t) = &self.tray {
+                    t.set_recording(false);
+                }
+                self.toast(el, &format!("{}: {e}", tr("Kayıt başlatılamadı")));
+            }
+            Ok(mut rec) => match (abort, self.recording.as_mut()) {
+                (Some(Abort::Cancel), _) => rec.cancel(),
+                (Some(Abort::Stop), _) => rec.stop(),
+                (None, Some(r)) => r.recorder = Some(*rec),
+                (None, None) => rec.cancel(),
+            },
         }
     }
 

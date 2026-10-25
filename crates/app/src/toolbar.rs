@@ -520,6 +520,9 @@ fn tool_row_y(elems: &[Elem]) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// Free space kept along the bottom edge of the window, in UI units.
+const SAFE_BOTTOM: f32 = 64.0;
+
 /// Where to put the toolbar for a selection: below its bottom-right, above if there is no room, inside as a last
 /// resort. `area` is the window; everything is in the same coordinates.
 pub fn place(sel: Rect, size: (f32, f32), area: Rect) -> Point {
@@ -527,12 +530,14 @@ pub fn place(sel: Rect, size: (f32, f32), area: Rect) -> Point {
     let x = (sel.right() - w)
         .min(area.right() - w - 8.0)
         .max(area.x + 8.0);
+    // desktop panels and docks can sit on top of the overlay along the bottom edge: stay clear of it
+    let bottom = area.bottom() - SAFE_BOTTOM;
     let mut y = sel.bottom() + 10.0;
-    if y + h > area.bottom() - 8.0 {
+    if y + h > bottom {
         y = sel.y - h - 10.0;
     }
     if y < area.y + 8.0 {
-        y = (sel.bottom() - h - 10.0).max(area.y + 8.0);
+        y = (sel.bottom() - h - 10.0).min(bottom - h).max(area.y + 8.0);
     }
     Point::new(x, y)
 }
@@ -682,7 +687,7 @@ mod tests {
         let above = place(Rect::new(100.0, 500.0, 300.0, 280.0), size, area);
         assert!(above.y + 80.0 <= 500.0);
         let inside = place(Rect::new(0.0, 0.0, 1000.0, 800.0), size, area);
-        assert!(inside.y >= 8.0 && inside.y + 80.0 <= 800.0);
+        assert!(inside.y >= 8.0 && inside.y + 80.0 <= 800.0 - SAFE_BOTTOM);
         let right_edge = place(Rect::new(800.0, 100.0, 190.0, 100.0), size, area);
         assert!(right_edge.x + 700.0 <= 992.0);
     }

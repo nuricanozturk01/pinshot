@@ -45,6 +45,7 @@ pub enum UserEvent {
     OcrDone(u64, Result<String, String>),
     RecordNow(Box<rec::RecordRequest>),
     Rec(pinshot_record::Event),
+    RecorderStarted(Result<Box<pinshot_record::Recorder>, String>),
     FolderChosen(Option<PathBuf>),
 }
 
@@ -101,6 +102,7 @@ pub struct App {
     color_win: Option<ColorWin>,
     recording: Option<rec::Recording>,
     rec_finalizing: Option<u64>,
+    start_abort: Option<rec::Abort>,
     last_output: Option<PathBuf>,
     ocr_engine: Arc<std::sync::Mutex<Option<pinshot_ocr::Engine>>>,
     ocr_last_use: Option<Instant>,
@@ -135,6 +137,7 @@ impl App {
             color_win: None,
             recording: None,
             rec_finalizing: None,
+            start_abort: None,
             last_output: None,
             ocr_engine: Arc::new(std::sync::Mutex::new(None)),
             ocr_last_use: None,
@@ -1986,6 +1989,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::OcrDone(id, r) => self.ocr_done(id, r),
             UserEvent::RecordNow(req) => self.record_now(el, *req),
             UserEvent::Rec(e) => self.rec_event(el, e),
+            UserEvent::RecorderStarted(r) => self.recorder_started(el, r),
             UserEvent::PinSaveChosen(id, p) => self.pin_save_chosen(el, id, p),
             UserEvent::PinFilesChosen(files) => self.pin_files_chosen(el, files),
             UserEvent::FolderChosen(p) => self.folder_chosen(p),
