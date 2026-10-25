@@ -1,3 +1,7 @@
+// mimalloc hands freed memory back to the system; the glibc heap kept ~100 MB after a capture
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod aboutwin;
 mod app;
 mod clip;
@@ -7,6 +11,7 @@ mod gfx;
 mod hotkeys;
 mod ipc;
 mod logging;
+mod mem;
 mod ocrwin;
 mod pins;
 mod popup;

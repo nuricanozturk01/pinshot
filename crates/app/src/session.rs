@@ -221,6 +221,11 @@ impl Session {
 
     // ------------------------------------------------------------------ frame
     /// Everything drawn on top of the dimmed screenshot in this window, as a pixel rectangle.
+    /// The strip at the top of the window that holds the hint pill (drawn while nothing is selected).
+    pub fn hint_strip(&self, g: &Geom) -> IRect {
+        IRect::new(0, 0, g.size.0, (60.0 * g.sf) as u32)
+    }
+
     pub fn extent(&self, g: &Geom) -> Option<IRect> {
         let mut ext: Option<IRect> = None;
         let mut add = |r: IRect| ext = Some(ext.map_or(r, |e| e.union(&r)));
@@ -242,17 +247,20 @@ impl Session {
                 .filter(|c| self.caps[g.mon].monitor.rect.contains(*c))
             {
                 let p = self.to_px(g.mon, c);
-                let reach = ((LOUPE_N * LOUPE_Z + 70) as f32 * g.sf) as i32;
+                // the loupe sits 22 px from the pointer, on any side, with two text pills under it that are
+                // wider than the box; be generous so no part of it is left behind when the pointer moves
+                let box_px = LOUPE_N * LOUPE_Z;
+                let left = ((box_px + 40) as f32 * g.sf) as i32;
+                let right = (360.0 * g.sf) as i32;
+                let up = ((box_px + 70) as f32 * g.sf) as i32;
+                let down = ((box_px + 100) as f32 * g.sf) as i32;
                 add(IRect::new(
-                    p.x as i32 - reach,
-                    p.y as i32 - reach,
-                    reach as u32 * 2,
-                    reach as u32 * 2,
+                    p.x as i32 - left,
+                    p.y as i32 - up,
+                    (left + right) as u32,
+                    (up + down) as u32,
                 ));
             }
-        }
-        if self.editor.sel.is_none() {
-            add(IRect::new(0, 0, g.size.0, (60.0 * g.sf) as u32));
         }
         ext.and_then(|e| e.intersect(&full))
     }
@@ -401,6 +409,7 @@ impl Session {
         let (ox, oy) = (cv.off.0 as i32, cv.off.1 as i32);
         let (pw, ph) = (cv.pm.width() as i32, cv.pm.height() as i32);
         let src = &cap.pixmap;
+        let data = cv.pm.data_mut();
         for j in 0..LOUPE_N {
             for i in 0..LOUPE_N {
                 let (sx, sy) = (cx - LOUPE_N / 2 + i, cy - LOUPE_N / 2 + j);
@@ -414,13 +423,21 @@ impl Session {
                 } else {
                     [0, 0, 0]
                 };
+                let x_from = (bx + i * z - ox).max(0);
+                let x_to = (bx + i * z + z - ox).min(pw);
+                if x_to <= x_from {
+                    continue;
+                }
+                let cell = [c[0], c[1], c[2], 255];
                 for yy in 0..z {
-                    for xx in 0..z {
-                        let (x, y) = (bx + i * z + xx - ox, by + j * z + yy - oy);
-                        if x >= 0 && y >= 0 && x < pw && y < ph {
-                            let k = ((y * pw + x) * 4) as usize;
-                            cv.pm.data_mut()[k..k + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
-                        }
+                    let y = by + j * z + yy - oy;
+                    if y < 0 || y >= ph {
+                        continue;
+                    }
+                    let row = &mut data[((y * pw + x_from) * 4) as usize..]
+                        [..((x_to - x_from) * 4) as usize];
+                    for px in row.as_chunks_mut::<4>().0 {
+                        *px = cell;
                     }
                 }
             }
@@ -473,26 +490,37 @@ pub fn crop(src: &Pixmap, region: IRect) -> Option<Pixmap> {
 /// `src` darkened by the dimming layer, restricted to `area`, into `out` (which has the size of `area`).
 pub fn dim_copy(src: &Pixmap, area: IRect, out: &mut Pixmap) {
     let keep = 255 - DIM_ALPHA;
-    let sw = src.width() as i32;
+    let lut: [u8; 256] = std::array::from_fn(|v| ((v as u32 * keep + 127) / 255) as u8);
+    let (sw, sh) = (src.width() as i64, src.height() as i64);
     let dw = out.width() as usize;
-    for y in 0..area.h as i32 {
-        let sy = area.y + y;
-        if sy < 0 || sy >= src.height() as i32 {
+    // the part of `area` that lies inside the source, per row
+    let x0 = i64::from(area.x).max(0);
+    let x1 = (i64::from(area.x) + i64::from(area.w)).min(sw);
+    if x1 <= x0 {
+        return;
+    }
+    let (n, off) = ((x1 - x0) as usize, (x0 - i64::from(area.x)) as usize);
+    let src_data = src.data();
+    let out_data = out.data_mut();
+    for y in 0..area.h as usize {
+        let sy = i64::from(area.y) + y as i64;
+        if sy < 0 || sy >= sh {
             continue;
         }
-        for x in 0..area.w as i32 {
-            let sx = area.x + x;
-            if sx < 0 || sx >= sw {
-                continue;
-            }
-            let s = ((sy * sw + sx) * 4) as usize;
-            let d = (y as usize * dw + x as usize) * 4;
-            let d4 = &mut out.data_mut()[d..d + 4];
-            let s4 = &src.data()[s..s + 4];
-            d4[0] = ((s4[0] as u32 * keep + 127) / 255) as u8;
-            d4[1] = ((s4[1] as u32 * keep + 127) / 255) as u8;
-            d4[2] = ((s4[2] as u32 * keep + 127) / 255) as u8;
-            d4[3] = 255;
+        let s = &src_data[((sy * sw + x0) * 4) as usize..][..n * 4];
+        let d = &mut out_data[(y * dw + off) * 4..][..n * 4];
+        for (d4, s4) in d
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(s.as_chunks::<4>().0)
+        {
+            *d4 = [
+                lut[s4[0] as usize],
+                lut[s4[1] as usize],
+                lut[s4[2] as usize],
+                255,
+            ];
         }
     }
 }

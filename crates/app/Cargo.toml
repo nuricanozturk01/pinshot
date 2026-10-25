@@ -19,6 +19,8 @@ image.workspace = true
 serde_json.workspace = true
 log.workspace = true
 directories.workspace = true
+libmimalloc-sys = { version = "0.1", default-features = false, features = ["extended"] }
+mimalloc = { version = "0.1", default-features = false }
 winit = "0.30"
 softbuffer = "0.4"
 clipboard-rs = "0.3"

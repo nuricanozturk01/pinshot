@@ -70,6 +70,8 @@ struct OverlayWin {
     sf: f32,
     prev: Option<IRect>,
     full: bool,
+    /// The hint pill was part of the last frame.
+    hint: bool,
     shown: bool,
 }
 
@@ -379,6 +381,7 @@ impl App {
                                 sf,
                                 prev: None,
                                 full: true,
+                                hint: true,
                                 shown: false,
                             });
                         }
@@ -487,6 +490,8 @@ impl App {
                 self.owners.remove(&w.sw.window.id());
             }
             self.save_cfg();
+            drop(ov);
+            crate::mem::release_unused();
         }
     }
 
@@ -506,13 +511,21 @@ impl App {
         };
         let full = IRect::new(0, 0, pw, ph);
         let cur = ov.session.extent(&g);
+        let hint = ov.session.editor.sel.is_none();
         let damage = if w.full {
             Some(full)
         } else {
-            match (w.prev, cur) {
+            let moved = match (w.prev, cur) {
                 (Some(a), Some(b)) => Some(a.union(&b)),
                 (Some(a), None) | (None, Some(a)) => Some(a),
                 (None, None) => None,
+            };
+            // the hint pill only changes when a selection starts or ends
+            if hint == w.hint {
+                moved
+            } else {
+                let strip = ov.session.hint_strip(&g);
+                Some(moved.map_or(strip, |m| m.union(&strip)))
             }
         };
         let Some(d) = damage.and_then(|d| d.intersect(&full)) else {
@@ -525,6 +538,7 @@ impl App {
         match w.sw.present(&pm, (d.x, d.y)) {
             Ok(true) => {
                 w.prev = cur;
+                w.hint = hint;
                 w.full = false;
                 if !w.shown {
                     w.shown = true;
