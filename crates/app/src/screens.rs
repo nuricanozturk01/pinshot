@@ -393,13 +393,17 @@ mod imp {
     }
 
     pub fn buttons_down() -> bool {
-        use core_graphics::event::CGMouseButton;
-        [CGMouseButton::Left, CGMouseButton::Right]
-            .iter()
-            .any(|b| CGEventSource::button_state(CGEventSourceStateID::CombinedSessionState, *b))
+        // `CGMouseButton`: 0 = left, 1 = right
+        [0u32, 1].into_iter().any(|button| {
+            // SAFETY: plain query of the combined session state; both arguments are valid enum values.
+            unsafe {
+                CGEventSourceButtonState(CGEventSourceStateID::CombinedSessionState as i32, button)
+            }
+        })
     }
 
     extern "C" {
+        fn CGEventSourceButtonState(state_id: i32, button: u32) -> bool;
         fn CGPreflightScreenCaptureAccess() -> bool;
         fn CGRequestScreenCaptureAccess() -> bool;
     }

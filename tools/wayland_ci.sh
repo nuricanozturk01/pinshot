@@ -26,7 +26,9 @@ CONF
 pids=()
 dump() {
   echo "::group::diagnostics"
-  for f in "$OUT"/*.log; do echo "--- $f"; tail -n 40 "$f" || true; done
+  for f in "$OUT"/portal*.log "$OUT"/*.log; do echo "--- $f"; tail -n 60 "$f" || true; done
+  dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus.ListNames 2>&1 | grep -i "portal" || true
   swaymsg -t get_tree 2>/dev/null | head -c 4000 || true
   echo "::endgroup::"
 }
@@ -59,9 +61,14 @@ for p in /usr/libexec/xdg-desktop-portal-wlr /usr/lib/xdg-desktop-portal-wlr; do
 done
 sleep 1
 for p in /usr/libexec/xdg-desktop-portal /usr/lib/xdg-desktop-portal; do
-  [ -x "$p" ] && start portal "$p" -r && break
+  [ -x "$p" ] && start portal "$p" -r -v && break
 done
-sleep 2
+has_owner() {
+  dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus.NameHasOwner string:"$1" | grep -q "boolean true"
+}
+wait_for "the portal frontend on the session bus" has_owner org.freedesktop.portal.Desktop
+wait_for "the wlr portal backend" has_owner org.freedesktop.impl.portal.desktop.wlr
 
 # 1. self-test: monitors via XWayland, screenshot through the portal, OCR, ffmpeg
 "$BIN" --selftest | tee "$OUT/selftest.txt"
