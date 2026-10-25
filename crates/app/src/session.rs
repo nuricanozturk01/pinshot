@@ -725,7 +725,11 @@ pub mod tests {
     fn extent_covers_selection_toolbar_and_loupe_only() {
         let mut s = session();
         let g = geom(0);
-        assert!(s.extent(&g).is_some(), "hint pill before any selection");
+        assert!(
+            s.extent(&g).is_none(),
+            "the hint pill is redrawn on state changes only, not with every frame"
+        );
+        assert_eq!(s.hint_strip(&g).w, g.size.0);
         s.cursor = Some(Point::new(200.0, 150.0));
         let with_loupe = s.extent(&g).unwrap();
         assert!(with_loupe.w > 100);
