@@ -77,10 +77,6 @@ pub enum Cmd {
     Pin,
     Ocr,
     Close,
-    /// Copy the colour under the cursor (the app knows the pixels); `hex` selects the text format.
-    CopyColor {
-        hex: bool,
-    },
     /// Select the whole monitor under the cursor.
     SelectMonitor,
 }
@@ -220,8 +216,6 @@ pub struct Editor {
     pub mode: Mode,
     pub cur: Option<Item>,
     pub edit: Option<TextEdit>,
-    /// Colour readout format for the pre-selection loupe.
-    pub hex: bool,
     anchor: Point,
     last: Point,
     grab_off: Point,
@@ -249,7 +243,6 @@ impl Editor {
             mode: Mode::Idle,
             cur: None,
             edit: None,
-            hex: true,
             anchor: Point::default(),
             last: Point::default(),
             grab_off: Point::default(),
@@ -784,13 +777,8 @@ impl Editor {
                     return Cmd::Close;
                 }
             }
-            Key::Shift if self.sel.is_none() => self.hex = !self.hex,
             Key::Char('a') if ctrl => return Cmd::SelectMonitor,
-            _ if self.sel.is_none() => {
-                if key == Key::Char('c') && !ctrl {
-                    return Cmd::CopyColor { hex: self.hex };
-                }
-            }
+            _ if self.sel.is_none() => {}
             Key::Enter => return Cmd::Copy,
             Key::Char('c') if ctrl => return Cmd::Copy,
             Key::Char('z') if ctrl && !shift => self.undo(m),
@@ -1108,15 +1096,6 @@ mod tests {
                 &Fake
             ),
             Cmd::SelectMonitor
-        );
-        assert_eq!(
-            e.key(Key::Char('c'), Mods::default(), &Fake),
-            Cmd::CopyColor { hex: true }
-        );
-        e.key(Key::Shift, Mods::default(), &Fake);
-        assert_eq!(
-            e.key(Key::Char('c'), Mods::default(), &Fake),
-            Cmd::CopyColor { hex: false }
         );
         assert_eq!(e.key(Key::Escape, Mods::default(), &Fake), Cmd::Close);
         let mut e = with_selection();

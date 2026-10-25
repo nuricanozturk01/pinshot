@@ -101,6 +101,27 @@ impl IRect {
         )
     }
 
+    /// `self` without the part `hole` covers, as up to four rectangles (`self` alone when they do not overlap).
+    pub fn without(&self, hole: &IRect) -> Vec<IRect> {
+        let Some(h) = self.intersect(hole) else {
+            return vec![*self];
+        };
+        [
+            IRect::new(self.x, self.y, self.w, (h.y - self.y) as u32),
+            IRect::new(
+                self.x,
+                h.bottom(),
+                self.w,
+                (self.bottom() - h.bottom()) as u32,
+            ),
+            IRect::new(self.x, h.y, (h.x - self.x) as u32, h.h),
+            IRect::new(h.right(), h.y, (self.right() - h.right()) as u32, h.h),
+        ]
+        .into_iter()
+        .filter(|r| r.w > 0 && r.h > 0)
+        .collect()
+    }
+
     /// Smallest integer rectangle containing the float rectangle.
     pub fn around(x: f32, y: f32, w: f32, h: f32) -> IRect {
         let (x0, y0) = (x.floor() as i32, y.floor() as i32);
@@ -188,27 +209,48 @@ impl SoftWindow {
         if check_age && !full && buf.age() != 1 {
             return Ok(false);
         }
-        let x0 = at.0.max(0) as usize;
-        let y0 = at.1.max(0) as usize;
-        let cw = (pm.width() as usize).min(ww as usize - x0.min(ww as usize));
-        let ch = (pm.height() as usize).min(wh as usize - y0.min(wh as usize));
-        let src = pm.data();
-        for row in 0..ch {
-            let s = &src[row * pm.width() as usize * 4..];
-            let d = &mut buf[(y0 + row) * ww as usize + x0..][..cw];
-            for (px, c) in d.iter_mut().zip(s.as_chunks::<4>().0) {
-                *px = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
-            }
-        }
-        let damage = softbuffer::Rect {
-            x: x0 as u32,
-            y: y0 as u32,
-            width: NonZeroU32::new(cw as u32).unwrap_or(NonZeroU32::MIN),
-            height: NonZeroU32::new(ch as u32).unwrap_or(NonZeroU32::MIN),
-        };
+        let damage = write_part(&mut buf, (ww, wh), pm, at);
         buf.present_with_damage(&[damage])
             .map_err(|e| e.to_string())?;
         Ok(true)
+    }
+
+    /// Like [`present_covering`](Self::present_covering) for several separate areas of one frame, shown together.
+    pub fn present_parts(&mut self, parts: &[(Pixmap, (i32, i32))]) -> Result<(), String> {
+        let size = self.size;
+        let mut buf = self.surface.buffer_mut().map_err(|e| e.to_string())?;
+        let damage: Vec<_> = parts
+            .iter()
+            .map(|(pm, at)| write_part(&mut buf, size, pm, *at))
+            .collect();
+        buf.present_with_damage(&damage).map_err(|e| e.to_string())
+    }
+}
+
+/// Copy `pm` into the window buffer at `at` (clipped to the window) and return the area written.
+fn write_part(
+    buf: &mut softbuffer::Buffer<'_, OwnedDisplayHandle, Arc<Window>>,
+    (ww, wh): (u32, u32),
+    pm: &Pixmap,
+    at: (i32, i32),
+) -> softbuffer::Rect {
+    let x0 = at.0.max(0) as usize;
+    let y0 = at.1.max(0) as usize;
+    let cw = (pm.width() as usize).min(ww as usize - x0.min(ww as usize));
+    let ch = (pm.height() as usize).min(wh as usize - y0.min(wh as usize));
+    let src = pm.data();
+    for row in 0..ch {
+        let s = &src[row * pm.width() as usize * 4..];
+        let d = &mut buf[(y0 + row) * ww as usize + x0..][..cw];
+        for (px, c) in d.iter_mut().zip(s.as_chunks::<4>().0) {
+            *px = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
+        }
+    }
+    softbuffer::Rect {
+        x: x0 as u32,
+        y: y0 as u32,
+        width: NonZeroU32::new(cw as u32).unwrap_or(NonZeroU32::MIN),
+        height: NonZeroU32::new(ch as u32).unwrap_or(NonZeroU32::MIN),
     }
 }
 

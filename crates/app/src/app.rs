@@ -81,6 +81,8 @@ struct OverlayWin {
     /// needs what those changed.
     history: Vec<IRect>,
     shown: bool,
+    /// The unchanging inner part of the rectangle being drawn, as of the last frame.
+    core: Option<IRect>,
 }
 
 struct Overlay {
@@ -393,6 +395,7 @@ impl App {
                                 hover_win: None,
                                 history: Vec::new(),
                                 shown: false,
+                                core: None,
                             });
                         }
                         Err(e) => log::error!("surface: {e}"),
@@ -413,6 +416,11 @@ impl App {
             last_draw: None,
             deferred: Vec::new(),
         });
+        // the screenshot already contains the pins; as live always-on-top windows they would cover the overlay
+        // and swallow the clicks meant for it
+        for p in &self.pins {
+            p.sw.window.set_visible(false);
+        }
         self.redraw_all();
     }
 
@@ -515,6 +523,9 @@ impl App {
             for w in &ov.wins {
                 self.owners.remove(&w.sw.window.id());
             }
+            for p in &self.pins {
+                p.sw.window.set_visible(true);
+            }
             self.save_cfg();
             drop(ov);
             crate::mem::release_unused();
@@ -581,11 +592,29 @@ impl App {
                 _ => full,
             };
         }
+        // a rectangle being dragged out only changes along its edges: skip the unchanged inside
+        let core_now = ov.session.draw_core(&g);
+        let strips = match (d != full && w.sw.buffer_age() == 1, w.core, core_now) {
+            (true, Some(a), Some(b)) => a
+                .intersect(&b)
+                .map(|hole| d.without(&hole))
+                .filter(|v| v.len() > 1 || v.first() != Some(&d)),
+            _ => None,
+        };
         let cursor_here = screens::cursor_pos()
             .map(|p| ov.session.caps[g.mon].monitor.rect.contains(p))
             .unwrap_or(win == 0);
-        let pm = ov.session.compose(&g, d);
-        match w.sw.present_covering(&pm, (d.x, d.y)).map(|()| true) {
+        let presented = if let Some(strips) = strips {
+            let parts: Vec<_> = strips
+                .iter()
+                .map(|r| (ov.session.compose(&g, *r), (r.x, r.y)))
+                .collect();
+            w.sw.present_parts(&parts).map(|()| true)
+        } else {
+            let pm = ov.session.compose(&g, d);
+            w.sw.present_covering(&pm, (d.x, d.y)).map(|()| true)
+        };
+        match presented {
             Ok(true) => {
                 if d == full {
                     w.history.clear();
@@ -595,6 +624,7 @@ impl App {
                     w.history.remove(0);
                 }
                 w.prev = cur;
+                w.core = core_now;
                 w.hint = hint;
                 w.hover_win = hover_win;
                 w.full = false;
@@ -917,22 +947,6 @@ impl App {
             Cmd::Save => self.overlay_save(el),
             Cmd::Pin => self.overlay_pin(el),
             Cmd::Ocr => self.overlay_ocr(el),
-            Cmd::CopyColor { hex } => {
-                let Some(ov) = self.overlay.as_ref() else {
-                    return;
-                };
-                let at = screens::cursor_pos().or(ov.session.cursor);
-                if let Some(c) = at.and_then(|p| ov.session.pixel_at(p)) {
-                    let text = if hex {
-                        c.to_hex().to_uppercase()
-                    } else {
-                        format!("rgb({}, {}, {})", c.r, c.g, c.b)
-                    };
-                    let _ = self.clip.set_text(&text);
-                    self.close_overlay();
-                    self.toast(el, &format!("{}: {text}", tr("Renk kopyalandı")));
-                }
-            }
             Cmd::SelectMonitor => {
                 let Some(ov) = self.overlay.as_mut() else {
                     return;

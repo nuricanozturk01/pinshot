@@ -1,0 +1,75 @@
+name: Release macOS Intel
+
+# Slow runner, so it is not part of the main Release workflow.
+# Manual run: Actions > Release macOS Intel > Run workflow. Give an existing release tag to attach the .dmg to it,
+# or leave it empty to only build the artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach the dmg to, e.g. v2026.10.0 (empty = build only)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-macos-intel-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag }}
+
+jobs:
+  build:
+    name: Build macOS amd64
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag != '' && inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stamp version from tag
+        if: env.RELEASE_TAG != ''
+        run: python packaging/package.py stamp "$RELEASE_TAG"
+
+      - name: Build macOS system-sound helper (Swift, ScreenCaptureKit)
+        run: bash packaging/macos/build_audiotap.sh
+
+      - run: pip install imageio-ffmpeg
+      - run: cargo build --release -p pinshot
+
+      - name: Self-test the built binary
+        timeout-minutes: 5
+        run: |
+          ./target/release/pinshot --version
+          ./target/release/pinshot --selftest || true
+
+      - name: Package
+        run: python packaging/package.py pack --arch amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-15-intel-amd64
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attach to GitHub Release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" release/*macos-amd64.dmg --clobber

@@ -17,8 +17,6 @@ use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
 /// Opacity of the dimming layer over everything outside the selection.
 const DIM_ALPHA: u32 = 120;
-const LOUPE_N: i32 = 15;
-const LOUPE_Z: i32 = 8;
 
 /// How a window relates to its monitor.
 #[derive(Clone, Copy, Debug)]
@@ -224,16 +222,6 @@ impl Session {
         Some((out, scale))
     }
 
-    /// Colour of the screenshot pixel under desktop point `p`.
-    pub fn pixel_at(&self, p: Point) -> Option<Rgba> {
-        let i = self.monitor_at(p)?;
-        let q = self.to_px(i, p);
-        let px = self.caps[i]
-            .pixmap
-            .pixel(q.x.max(0.0) as u32, q.y.max(0.0) as u32)?;
-        Some(Rgba::rgb(px.red(), px.green(), px.blue()))
-    }
-
     // ------------------------------------------------------------------ frame
     /// Everything drawn on top of the dimmed screenshot in this window, as a pixel rectangle.
     /// The strip at the top of the window that holds the hint pill (drawn while nothing is selected).
@@ -259,6 +247,23 @@ impl Session {
         Some(IRect::around(r.x, r.y, r.w, r.h).inflate((24.0 * g.sf) as i32))
     }
 
+    /// While a rectangle is dragged out: the inner part of it that looks the same in every frame (the stroke and
+    /// the edges that move are all outside it), so only the strips around the edges need redrawing.
+    pub fn draw_core(&self, g: &Geom) -> Option<IRect> {
+        use pinshot_core::editor::Mode;
+        let it = self.editor.cur.as_ref().filter(|it| {
+            self.editor.mode == Mode::Draw && it.kind == Kind::Rect && it.pts.len() >= 2
+        })?;
+        let b = annotate::Item::bounds(it, Fonts::embedded());
+        let (a, c) = (
+            self.to_px(g.mon, b.top_left()),
+            self.to_px(g.mon, Point::new(b.right(), b.bottom())),
+        );
+        let r = Rect::from_points(a, c);
+        let core = IRect::around(r.x, r.y, r.w, r.h).inflate(-((24.0 * g.sf) as i32));
+        (core.w > 0 && core.h > 0).then_some(core)
+    }
+
     pub fn extent(&self, g: &Geom) -> Option<IRect> {
         let mut ext: Option<IRect> = None;
         let mut add = |r: IRect| ext = Some(ext.map_or(r, |e| e.union(&r)));
@@ -277,27 +282,6 @@ impl Session {
         if let Some(o) = self.toolbar_origin(g).filter(|_| drawing.is_none()) {
             let (w, h) = self.toolbar.size();
             add(IRect::around(o.x * g.sf, o.y * g.sf, w * g.sf, h * g.sf + 40.0 * g.sf).inflate(4));
-        }
-        if self.editor.sel.is_none() || self.editor.mode == pinshot_core::editor::Mode::SelNew {
-            if let Some(c) = self
-                .cursor
-                .filter(|c| self.caps[g.mon].monitor.rect.contains(*c))
-            {
-                let p = self.to_px(g.mon, c);
-                // the loupe sits 22 px from the pointer, on any side, with two text pills under it that are
-                // wider than the box; be generous so no part of it is left behind when the pointer moves
-                let box_px = LOUPE_N * LOUPE_Z;
-                let left = ((box_px + 40) as f32 * g.sf) as i32;
-                let right = (360.0 * g.sf) as i32;
-                let up = ((box_px + 70) as f32 * g.sf) as i32;
-                let down = ((box_px + 100) as f32 * g.sf) as i32;
-                add(IRect::new(
-                    p.x as i32 - left,
-                    p.y as i32 - up,
-                    (left + right) as u32,
-                    (up + down) as u32,
-                ));
-            }
         }
         ext.and_then(|e| e.intersect(&full))
     }
@@ -322,13 +306,10 @@ impl Session {
             }
         } else if self.editor.mode == pinshot_core::editor::Mode::Idle {
             let txt = pinshot_core::i18n::tr(
-                "Alanı seçmek için sürükle  ·  Pencere için tıkla  ·  Ctrl+A tüm ekran  ·  C renk kopyala  ·  Esc iptal",
+                "Alanı seçmek için sürükle  ·  Pencere için tıkla  ·  Ctrl+A tüm ekran  ·  Esc iptal",
             );
             let w = cv.text_width(txt, 12.0, false) + 16.0;
             cv.pill((g.size.0 as f32 / sf - w) / 2.0, 24.0, txt);
-        }
-        if self.editor.sel.is_none() || self.editor.mode == pinshot_core::editor::Mode::SelNew {
-            self.draw_loupe(&mut cv, g);
         }
         if let (Some(o), Some(p)) = (self.panel_origin(g), self.rec.as_ref()) {
             p.draw(&mut cv, o);
@@ -448,94 +429,6 @@ impl Session {
             let y = if tl.y > 32.0 { tl.y - 28.0 } else { tl.y + 6.0 };
             cv.pill(tl.x.max(4.0), y, &txt);
         }
-    }
-
-    fn draw_loupe(&self, cv: &mut Canvas, g: &Geom) {
-        let Some(cur) = self
-            .cursor
-            .filter(|c| self.caps[g.mon].monitor.rect.contains(*c))
-        else {
-            return;
-        };
-        let cap = &self.caps[g.mon];
-        let sf = g.sf;
-        let p = self.to_px(g.mon, cur);
-        let (cx, cy) = (p.x as i32, p.y as i32);
-        let z = ((LOUPE_Z as f32 * sf).round() as i32).max(2);
-        let size = LOUPE_N * z;
-        let (mut bx, mut by) = (cx + (22.0 * sf) as i32, cy + (22.0 * sf) as i32);
-        if bx + size + 4 > g.size.0 as i32 {
-            bx = cx - (22.0 * sf) as i32 - size;
-        }
-        if by + size + (56.0 * sf) as i32 > g.size.1 as i32 {
-            by = cy - (58.0 * sf) as i32 - size;
-        }
-        // zoomed pixels, written directly (no anti-aliased seams between cells)
-        let (ox, oy) = (cv.off.0 as i32, cv.off.1 as i32);
-        let (pw, ph) = (cv.pm.width() as i32, cv.pm.height() as i32);
-        let src = &cap.pixmap;
-        let data = cv.pm.data_mut();
-        for j in 0..LOUPE_N {
-            for i in 0..LOUPE_N {
-                let (sx, sy) = (cx - LOUPE_N / 2 + i, cy - LOUPE_N / 2 + j);
-                let c = if sx >= 0
-                    && sy >= 0
-                    && (sx as u32) < src.width()
-                    && (sy as u32) < src.height()
-                {
-                    let q = src.pixel(sx as u32, sy as u32).expect("in range");
-                    [q.red(), q.green(), q.blue()]
-                } else {
-                    [0, 0, 0]
-                };
-                let x_from = (bx + i * z - ox).max(0);
-                let x_to = (bx + i * z + z - ox).min(pw);
-                if x_to <= x_from {
-                    continue;
-                }
-                let cell = [c[0], c[1], c[2], 255];
-                for yy in 0..z {
-                    let y = by + j * z + yy - oy;
-                    if y < 0 || y >= ph {
-                        continue;
-                    }
-                    let row = &mut data[((y * pw + x_from) * 4) as usize..]
-                        [..((x_to - x_from) * 4) as usize];
-                    for px in row.as_chunks_mut::<4>().0 {
-                        *px = cell;
-                    }
-                }
-            }
-        }
-        let bx_ui = bx as f32 / sf;
-        let by_ui = by as f32 / sf;
-        let sz_ui = size as f32 / sf;
-        let boxr = Rect::new(bx_ui, by_ui, sz_ui, sz_ui);
-        cv.stroke_rect(boxr, 2.0, theme::ACCENT, false);
-        let mid = Rect::new(
-            bx_ui + (LOUPE_N / 2) as f32 * z as f32 / sf,
-            by_ui + (LOUPE_N / 2) as f32 * z as f32 / sf,
-            z as f32 / sf,
-            z as f32 / sf,
-        );
-        cv.stroke_rect(mid, 1.0, Rgba::WHITE, false);
-        let col = self.pixel_at(cur).unwrap_or(Rgba::BLACK);
-        let text = if self.editor.hex {
-            col.to_hex().to_uppercase()
-        } else {
-            format!("rgb({}, {}, {})", col.r, col.g, col.b)
-        };
-        cv.pill(bx_ui, by_ui + sz_ui + 4.0, &text);
-        cv.pill(
-            bx_ui,
-            by_ui + sz_ui + 28.0,
-            &format!(
-                "{}, {}   {}",
-                cx,
-                cy,
-                pinshot_core::i18n::tr("C kopyala · Shift biçim")
-            ),
-        );
     }
 }
 
@@ -785,6 +678,55 @@ pub mod tests {
         assert_eq!(differing, 0, "{differing} pixels differ from a full redraw");
     }
 
+    /// Dragging a big rectangle redraws only strips along its edges; the result must equal a full redraw.
+    #[test]
+    fn rectangle_drag_redraws_only_edge_strips_and_matches_a_full_frame() {
+        let mut s = session();
+        s.cursor = None;
+        let m = &crate::screens::tests_support::NoMeasure;
+        drag(&mut s, (5.0, 5.0), (395.0, 295.0));
+        s.editor.set_tool(Tool::Draw(Kind::Rect), m);
+        let g = geom(0);
+        let all = IRect::new(0, 0, 400, 300);
+        s.editor.press(Point::new(20.0, 20.0), Button::Left, m);
+        s.editor.moved(Point::new(250.0, 200.0), false);
+        let mut shown = s.compose(&g, all);
+        let (prev, prev_core) = (s.extent(&g).unwrap(), s.draw_core(&g).unwrap());
+        s.editor.moved(Point::new(300.0, 250.0), false);
+        let (cur, cur_core) = (s.extent(&g).unwrap(), s.draw_core(&g).unwrap());
+        let hole = prev_core.intersect(&cur_core).unwrap();
+        let strips = prev.union(&cur).without(&hole);
+        let area: u32 = strips.iter().map(|r| r.w * r.h).sum();
+        let union = prev.union(&cur);
+        assert!(area < union.w * union.h, "the inside is skipped: {area}");
+        for r in &strips {
+            let part = s.compose(&g, *r);
+            shown.draw_pixmap(
+                r.x,
+                r.y,
+                part.as_ref(),
+                &PixmapPaint {
+                    blend_mode: tiny_skia::BlendMode::Source,
+                    ..PixmapPaint::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+        let full = s.compose(&g, all);
+        let differing = (0..300)
+            .flat_map(|y| (0..400).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                px(&shown, x, y)
+                    .iter()
+                    .zip(px(&full, x, y))
+                    .any(|(p, q)| (*p as i32 - q as i32).abs() > 4)
+            })
+            .collect::<Vec<_>>();
+        // the toolbar's anti-aliased edge may round differently where a strip cuts through it
+        assert!(differing.len() <= 3, "differ at {differing:?}");
+    }
+
     #[test]
     fn selection_across_two_monitors_is_split_between_windows() {
         let mut s = session();
@@ -830,7 +772,7 @@ pub mod tests {
     }
 
     #[test]
-    fn extent_covers_selection_toolbar_and_loupe_only() {
+    fn extent_covers_selection_and_toolbar_only() {
         let mut s = session();
         let g = geom(0);
         assert!(
@@ -839,8 +781,7 @@ pub mod tests {
         );
         assert_eq!(s.hint_strip(&g).w, g.size.0);
         s.cursor = Some(Point::new(200.0, 150.0));
-        let with_loupe = s.extent(&g).unwrap();
-        assert!(with_loupe.w > 100);
+        assert!(s.extent(&g).is_none(), "the pointer alone draws nothing");
         drag(&mut s, (100.0, 100.0), (150.0, 140.0));
         s.cursor = None;
         let e = s.extent(&g).unwrap();
@@ -850,24 +791,6 @@ pub mod tests {
             "the other monitor has nothing to redraw"
         );
         let _ = (Cmd::None, Key::Escape, Mods::default());
-    }
-
-    #[test]
-    fn loupe_shows_zoomed_pixels_and_the_colour_text() {
-        let mut s = session();
-        s.cursor = Some(Point::new(200.0, 100.0));
-        let f = s.compose(&geom(0), IRect::new(0, 0, 400, 300));
-        // loupe box starts at cursor + 22
-        let (bx, by) = (222u32, 122u32);
-        assert_eq!(
-            px(&f, bx + 7 * 8 + 3, by + 7 * 8 + 3),
-            px(&s.caps[0].pixmap, 200, 100),
-            "centre cell = pixel under the cursor"
-        );
-        assert_eq!(
-            s.pixel_at(Point::new(200.0, 100.0)),
-            Some(Rgba::rgb(200, 100, 128))
-        );
     }
 
     #[test]

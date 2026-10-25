@@ -36,7 +36,6 @@ jobs:
           - { name: "Linux arm64", runner: ubuntu-24.04-arm, arch: arm64 }
           - { name: "Windows amd64", runner: windows-latest, arch: amd64 }
           - { name: "macOS arm64", runner: macos-15, arch: arm64 }
-          - { name: "macOS amd64", runner: macos-15-intel, arch: amd64 }
     defaults:
       run:
         shell: bash
@@ -111,7 +110,7 @@ jobs:
           ls -la artifacts
           missing=0
           for pat in "linux-amd64.deb" "linux-amd64.tar.gz" "linux-arm64.deb" "linux-arm64.tar.gz" \
-                     "windows-amd64.zip" "macos-arm64.dmg" "macos-amd64.dmg"; do
+                     "windows-amd64.zip" "macos-arm64.dmg"; do
             if ! ls artifacts/*"$pat" >/dev/null 2>&1; then echo "MISSING: $pat"; missing=1; fi
           done
           [ "$missing" = 0 ]
@@ -128,6 +127,8 @@ jobs:
           files: artifacts/*
           body: |
             Rust edition: one native binary, no Python or Qt. Settings file and shortcuts are compatible with the Python edition.
+
+            **macOS Intel (amd64):** built separately via the "Release macOS Intel" workflow, so it may be attached later or missing.
 
             **macOS:** ad-hoc signed, not notarised. On first launch right-click the app > Open, then grant
             *Screen Recording* (and *Microphone* when recording audio) in System Settings > Privacy & Security.
