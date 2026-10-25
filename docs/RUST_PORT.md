@@ -18,15 +18,18 @@ Written but **not run on real hardware** (CI compiles them): Windows capture/aud
 (CoreGraphics, avfoundation, audiotap helper), tray-icon on Windows/macOS.
 
 ### Next steps
-1. ~~Settings window~~ done (`settingswin.rs`: shortcut capture, folder picker, autostart, apply → hotkeys/language). Only opened and logged on X11; click-through not yet automated.
-2. Known flake: the very first mouse press/release after the overlay opens is sometimes not delivered when input
-   is synthesised with XTest (`crates/app/examples/xdrive.rs`); the editor already recovers from a lost release.
-3. macOS permission helper (screen recording, input monitoring, microphone) and Wayland portal capture.
-4. Packaging (deb/dmg/exe + bundled ffmpeg), release workflow, replace the Python build.
-5. Idle memory: ~126 MB RSS idle in release; investigate (fonts, ksni/zbus, embedded models are mapped lazily).
-6. Click-through checks of the settings window, About and colour picker (only opened on X11 so far).
+1. Real-device checks: Windows and macOS (capture, system sound, permissions, installers), Wayland portal capture on a
+   real Wayland session (the portal path was only exercised on X11 by forcing `XDG_SESSION_TYPE=wayland`), folder picker
+   and autostart in the settings window. Screen recording on Wayland still uses X11 grabs (needs PipeWire).
+2. Known flake: the very first mouse press/release after the overlay opens was lost once with XTest; 20 scripted
+   runs did not reproduce it.
+3. Cut the first Rust release: tag `rust-vX.Y.Z` runs `.github/workflows/rust-release.yml` (pre-release). Replacing the
+   Python build means merging `rust` into `master` and pointing `release.yml` at `packaging/rust/package.py`.
+4. Idle memory: ~126 MB RSS idle in release; investigate (fonts, ksni/zbus, embedded models are mapped lazily).
 
-Done since: settings window, About (`--about`), colour picker, `--selftest`, clippy clean (`-D warnings`).
+Done: settings window, About (`--about`), colour picker, `--selftest`, clippy clean (`-D warnings`), Wayland portal
+capture, macOS privacy-pane shortcut, packaging script (`packaging/rust/package.py`, deb/tar.gz verified locally) and
+release workflow.
 
 ## Architecture
 
@@ -68,7 +71,7 @@ Done since: settings window, About (`--about`), colour picker, `--selftest`, cli
 - [ ] MP4 / GIF recording, audio, island
 - [x] Settings dialog
 - [x] About
-- [ ] Installers
+- [x] Installers (script + workflow; deb/tar.gz built locally, Windows/macOS only by CI)
 
 ## Known differences
 

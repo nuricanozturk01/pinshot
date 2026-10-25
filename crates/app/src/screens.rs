@@ -428,12 +428,135 @@ pub fn screen_access(_request: bool) -> bool {
 pub use imp::screen_access;
 pub use imp::{buttons_down, cursor_pos, grab, grab_part, grab_raw, monitors};
 
+/// Wayland: X11 grabs return black, so the screenshot portal is asked for the whole desktop and cut per monitor.
+#[cfg(target_os = "linux")]
+mod portal {
+    use super::{imp, Capture, Monitor};
+    use tiny_skia::Pixmap;
+
+    /// Is this a Wayland session?
+    pub fn is_wayland() -> bool {
+        std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"))
+    }
+
+    pub fn decode_uri(uri: &str) -> Option<std::path::PathBuf> {
+        let path = uri.strip_prefix("file://")?;
+        let b = path.as_bytes();
+        let mut out = Vec::with_capacity(b.len());
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' && i + 2 < b.len() {
+                let hex = std::str::from_utf8(&b[i + 1..i + 3]).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 3;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        Some(std::path::PathBuf::from(String::from_utf8(out).ok()?))
+    }
+
+    fn desktop_image() -> Result<image::RgbaImage, String> {
+        let shot = async_io::block_on(async {
+            ashpd::desktop::screenshot::Screenshot::request()
+                .interactive(false)
+                .send()
+                .await
+                .and_then(|r| r.response())
+        })
+        .map_err(|e| format!("screenshot portal: {e}"))?;
+        let path = decode_uri(shot.uri().as_str()).ok_or("screenshot portal returned a bad uri")?;
+        let img = image::open(&path).map_err(|e| e.to_string())?.to_rgba8();
+        let _ = std::fs::remove_file(&path);
+        Ok(img)
+    }
+
+    /// Cut one monitor out of the desktop image. `scale` is image pixels per desktop unit.
+    pub fn crop(
+        img: &image::RgbaImage,
+        m: &Monitor,
+        origin: (f32, f32),
+        scale: f32,
+    ) -> Option<Pixmap> {
+        let x = ((m.rect.x - origin.0) * scale).round().max(0.0) as u32;
+        let y = ((m.rect.y - origin.1) * scale).round().max(0.0) as u32;
+        let w = ((m.rect.w * scale).round() as u32).min(img.width().saturating_sub(x));
+        let h = ((m.rect.h * scale).round() as u32).min(img.height().saturating_sub(y));
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let mut part = image::imageops::crop_imm(img, x, y, w, h).to_image();
+        for p in part.pixels_mut() {
+            p.0[3] = 255;
+        }
+        let size = tiny_skia::IntSize::from_wh(w, h)?;
+        Pixmap::from_vec(part.into_raw(), size)
+    }
+
+    pub fn grab_all() -> Result<Vec<Capture>, String> {
+        let mons = imp::monitors()?;
+        let img = desktop_image()?;
+        let left = mons.iter().map(|m| m.rect.x).fold(f32::MAX, f32::min);
+        let top = mons.iter().map(|m| m.rect.y).fold(f32::MAX, f32::min);
+        let right = mons.iter().map(|m| m.rect.right()).fold(f32::MIN, f32::max);
+        let scale = img.width() as f32 / (right - left).max(1.0);
+        mons.into_iter()
+            .map(|m| {
+                let pixmap = crop(&img, &m, (left, top), scale)
+                    .ok_or_else(|| format!("monitor {} is outside the screenshot", m.name))?;
+                Ok(Capture { monitor: m, pixmap })
+            })
+            .collect()
+    }
+}
+
 /// Grab every monitor.
 pub fn grab_all() -> Result<Vec<Capture>, String> {
+    #[cfg(target_os = "linux")]
+    if portal::is_wayland() {
+        return portal::grab_all();
+    }
     let mons = monitors()?;
     mons.into_iter()
         .map(|m| grab(&m).map(|pixmap| Capture { monitor: m, pixmap }))
         .collect()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod portal_tests {
+    use super::portal::{crop, decode_uri};
+    use super::Monitor;
+    use pinshot_core::Rect;
+
+    #[test]
+    fn decodes_file_uris() {
+        assert_eq!(
+            decode_uri("file:///tmp/a%20b.png").unwrap(),
+            std::path::PathBuf::from("/tmp/a b.png")
+        );
+        assert!(decode_uri("https://x/y.png").is_none());
+    }
+
+    #[test]
+    fn crops_a_monitor_out_of_the_desktop_image() {
+        let mut img = image::RgbaImage::new(200, 100);
+        for (x, _, p) in img.enumerate_pixels_mut() {
+            p.0 = if x < 100 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
+        }
+        let m = Monitor {
+            name: "right".into(),
+            rect: Rect::new(1000.0, 0.0, 100.0, 100.0),
+            scale: 1.0,
+        };
+        let pm = crop(&img, &m, (900.0, 0.0), 1.0).unwrap();
+        assert_eq!((pm.width(), pm.height()), (100, 100));
+        assert_eq!(pm.pixel(5, 5).unwrap().blue(), 255);
+    }
 }
 
 #[cfg(test)]

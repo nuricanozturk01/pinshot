@@ -27,6 +27,16 @@ pub fn run() -> i32 {
         )),
         &mut failed,
     );
+    #[cfg(target_os = "macos")]
+    report(
+        "screen recording permission",
+        if screens::screen_access(false) {
+            Ok("granted".to_string())
+        } else {
+            Err("not granted: System Settings > Privacy & Security > Screen Recording".into())
+        },
+        &mut failed,
+    );
     report(
         "screen capture",
         screens::grab_all().and_then(|caps| {

@@ -306,6 +306,9 @@ impl App {
 
     fn grab(&mut self, el: &ActiveEventLoop) -> Option<Vec<Capture>> {
         if !screens::screen_access(true) {
+            open_url(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            );
             self.toast(el, tr("macOS: Sistem Ayarları › Gizlilik › Ekran Kaydı'nda PinShot'a izin verin, sonra yeniden başlatın."));
             return None;
         }
