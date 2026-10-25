@@ -14,6 +14,7 @@ mod recui;
 mod screens;
 mod session;
 mod settings;
+mod settingswin;
 mod toast;
 mod toolbar;
 mod tray;

@@ -9,6 +9,8 @@ use crate::pins::PinWin;
 use crate::popup::{Outcome, Popup};
 use crate::screens::{self, Capture};
 use crate::session::{Geom, Session};
+use crate::settings;
+use crate::settingswin::{Btn as SBtn, SettingsWin};
 use crate::toast::Toast;
 use crate::toolbar::{Act, Event as TbEvent};
 use crate::ui::menu::Item as MenuItem;
@@ -42,6 +44,7 @@ pub enum UserEvent {
     RecordNow(Box<rec::RecordRequest>),
     Rec(pinshot_record::Event),
     Toast(String),
+    FolderChosen(Option<PathBuf>),
 }
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
@@ -55,6 +58,7 @@ enum Owner {
     Menu,
     Ocr(u64),
     Island,
+    Settings,
 }
 
 struct OverlayWin {
@@ -87,6 +91,7 @@ pub struct App {
     next_pin: u64,
     popup: Option<Popup>,
     ocr_wins: Vec<OcrWin>,
+    settings_win: Option<SettingsWin>,
     recording: Option<rec::Recording>,
     rec_finalizing: Option<u64>,
     last_output: Option<PathBuf>,
@@ -118,6 +123,7 @@ impl App {
             next_pin: 1,
             popup: None,
             ocr_wins: Vec::new(),
+            settings_win: None,
             recording: None,
             rec_finalizing: None,
             last_output: None,
@@ -260,6 +266,7 @@ impl App {
                     open_path(p);
                 }
             }
+            "settings" => self.open_settings(el),
             "pin_clipboard" => self.pin_clipboard(el),
             "pin_file" => self.pin_file_dialog(),
             "close_pins" => self.close_all_pins(),
@@ -1063,6 +1070,146 @@ impl App {
         }
     }
 
+    // ------------------------------------------------------------------ settings
+    fn open_settings(&mut self, el: &ActiveEventLoop) {
+        if let Some(w) = self.settings_win.as_ref() {
+            w.sw.window.focus_window();
+            return;
+        }
+        let Some(ctx) = self.ctx.as_ref() else { return };
+        match SettingsWin::create(el, ctx, &self.cfg, cfg!(target_os = "macos")) {
+            Ok(w) => {
+                self.owners.insert(w.sw.window.id(), Owner::Settings);
+                self.settings_win = Some(w);
+            }
+            Err(e) => log::error!("settings window: {e}"),
+        }
+    }
+
+    fn close_settings(&mut self) {
+        if let Some(w) = self.settings_win.take() {
+            self.owners.remove(&w.sw.window.id());
+        }
+    }
+
+    /// Write the form into the configuration and make it take effect.
+    fn apply_settings(&mut self, el: &ActiveEventLoop) {
+        let Some(w) = self.settings_win.as_ref() else {
+            return;
+        };
+        let was_autostart = self.cfg.autostart;
+        settings::apply(&w.form, &mut self.cfg, w.mac);
+        self.save_cfg();
+        pinshot_core::i18n::apply(&self.cfg.language, sys_locale::get_locale());
+        self.reload_hotkeys(el);
+        if self.cfg.autostart != was_autostart {
+            if let Err(e) = set_autostart(self.cfg.autostart) {
+                log::warn!("autostart: {e}");
+                self.toast(el, tr("Otomatik başlatma ayarlanamadı"));
+            }
+        }
+        self.close_settings();
+    }
+
+    fn folder_chosen(&mut self, path: Option<PathBuf>) {
+        let (Some(path), Some(w)) = (path, self.settings_win.as_mut()) else {
+            return;
+        };
+        if let Some(r) = w.form.row_mut("save_dir") {
+            r.control = crate::form::Control::Folder(path.to_string_lossy().into_owned());
+        }
+        w.sw.window.request_redraw();
+    }
+
+    fn settings_event(&mut self, el: &ActiveEventLoop, event: WindowEvent) {
+        let Some(w) = self.settings_win.as_mut() else {
+            return;
+        };
+        match event {
+            WindowEvent::RedrawRequested => w.draw(),
+            WindowEvent::Resized(_) => w.sw.window.request_redraw(),
+            WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
+            WindowEvent::CloseRequested => self.close_settings(),
+            WindowEvent::CursorMoved { position, .. } => {
+                let p = w.to_ui(position.x, position.y);
+                if w.hover_at(p) {
+                    w.sw.window.request_redraw();
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if w.hover_at(Point::new(-1.0, -1.0)) {
+                    w.sw.window.request_redraw();
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let d = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y * 40.0,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / w.sf,
+                };
+                w.scroll_by(d);
+                w.sw.window.request_redraw();
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                match w.hover {
+                    Some(SBtn::Save) => return self.apply_settings(el),
+                    Some(SBtn::Cancel) => return self.close_settings(),
+                    None => {}
+                }
+                let ev = w.press(w.last);
+                w.sw.window.request_redraw();
+                if let Some(crate::form::Event::Browse(_)) = ev {
+                    let proxy = self.proxy.clone();
+                    let start = self.cfg.save_dir_path();
+                    std::thread::spawn(move || {
+                        let p = rfd::FileDialog::new().set_directory(start).pick_folder();
+                        let _ = proxy.send_event(UserEvent::FolderChosen(p));
+                    });
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                self.settings_key(&event);
+            }
+            _ => {}
+        }
+    }
+
+    fn settings_key(&mut self, event: &KeyEvent) {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        let Some(w) = self.settings_win.as_mut() else {
+            return;
+        };
+        if w.form.capturing.is_none() {
+            if matches!(event.logical_key, WKey::Named(NamedKey::Escape)) {
+                self.close_settings();
+            }
+            return;
+        }
+        let m = self.mods;
+        let name = match event.key_without_modifiers() {
+            WKey::Character(c) if c.chars().count() == 1 => Some(c.to_uppercase()),
+            WKey::Named(n) => f_key_name(n),
+            _ => None,
+        };
+        let combo = match (&event.logical_key, name) {
+            (WKey::Named(NamedKey::Escape), _) => None,
+            (WKey::Named(NamedKey::Delete | NamedKey::Backspace), _) => Some(String::new()),
+            (_, Some(n)) => settings::combo_text(
+                m.control_key(),
+                m.alt_key(),
+                m.shift_key(),
+                m.super_key(),
+                &n,
+            ),
+            _ => return, // a lone modifier: keep waiting
+        };
+        w.form.set_hotkey(combo);
+        w.sw.window.request_redraw();
+    }
+
     // ------------------------------------------------------------------ pins
     fn add_pin(&mut self, el: &ActiveEventLoop, pm: tiny_skia::Pixmap, at: Point, dpr: f32) {
         let Some(ctx) = self.ctx.as_ref() else { return };
@@ -1660,6 +1807,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::PinSaveChosen(id, p) => self.pin_save_chosen(el, id, p),
             UserEvent::PinFilesChosen(files) => self.pin_files_chosen(el, files),
             UserEvent::Toast(t) => self.toast(el, &t),
+            UserEvent::FolderChosen(p) => self.folder_chosen(p),
         }
     }
 
@@ -1673,6 +1821,7 @@ impl ApplicationHandler<UserEvent> for App {
             Owner::Menu => return self.menu_event(el, id, event),
             Owner::Ocr(oid) => return self.ocr_event(el, oid, event),
             Owner::Island => return self.island_event(el, event),
+            Owner::Settings => return self.settings_event(el, event),
             Owner::Toast => {
                 if let WindowEvent::MouseInput {
                     state: ElementState::Pressed,
@@ -1798,4 +1947,41 @@ pub fn run(first_command: Option<String>) -> Result<(), String> {
     }
     let mut app = App::new(proxy);
     el.run_app(&mut app).map_err(|e| e.to_string())
+}
+
+/// `F1`..`F24` for a function key.
+fn f_key_name(n: NamedKey) -> Option<String> {
+    let i = [
+        NamedKey::F1,
+        NamedKey::F2,
+        NamedKey::F3,
+        NamedKey::F4,
+        NamedKey::F5,
+        NamedKey::F6,
+        NamedKey::F7,
+        NamedKey::F8,
+        NamedKey::F9,
+        NamedKey::F10,
+        NamedKey::F11,
+        NamedKey::F12,
+    ]
+    .iter()
+    .position(|k| *k == n)?;
+    Some(format!("F{}", i + 1))
+}
+
+/// Register or remove the start-at-login entry for this executable.
+fn set_autostart(on: bool) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let launcher = auto_launch::AutoLaunchBuilder::new()
+        .set_app_name("PinShot")
+        .set_app_path(&exe.to_string_lossy())
+        .build()
+        .map_err(|e| e.to_string())?;
+    if on {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    }
+    .map_err(|e| e.to_string())
 }

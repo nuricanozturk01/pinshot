@@ -18,8 +18,7 @@ Written but **not run on real hardware** (CI compiles them): Windows capture/aud
 (CoreGraphics, avfoundation, audiotap helper), tray-icon on Windows/macOS.
 
 ### Next steps
-1. Settings window: `form.rs` + `settings.rs` are done and tested; still to do: the window itself (events, shortcut
-   capture from winit keys, folder picker via rfd, autostart via `auto-launch`, apply → reload hotkeys/language).
+1. ~~Settings window~~ done (`settingswin.rs`: shortcut capture, folder picker, autostart, apply → hotkeys/language). Only opened and logged on X11; click-through not yet automated.
 2. About window (version, author link, log folder).
 3. Custom colour picker popup (toolbar "+" button currently only logs).
 4. Fix known flake: the very first mouse press/release after the overlay opens is sometimes not delivered when input
@@ -67,7 +66,8 @@ Written but **not run on real hardware** (CI compiles them): Windows capture/aud
 - [ ] Global hotkeys, tray, single instance, CLI
 - [ ] OCR, colour picker
 - [ ] MP4 / GIF recording, audio, island
-- [ ] Settings dialog, About
+- [x] Settings dialog
+- [ ] About
 - [ ] Installers
 
 ## Known differences
