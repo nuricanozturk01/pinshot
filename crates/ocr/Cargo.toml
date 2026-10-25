@@ -1,6 +1,6 @@
 [package]
 name = "pinshot-ocr"
-description = "Offline text recognition (PP-OCRv4 models, pure Rust inference)"
+description = "Offline text recognition (PP-OCR models, Latin scripts, pure Rust inference)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

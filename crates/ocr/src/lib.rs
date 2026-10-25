@@ -1,4 +1,4 @@
-//! Offline OCR: PP-OCRv4 detection + recognition models run with tract (pure Rust, no native libraries).
+//! Offline OCR: PP-OCRv4 text detection + PP-OCRv5 Latin recognition models (Turkish, English and other Latin scripts) run with tract (pure Rust, no native libraries).
 //!
 //! Pipeline: scale → text detection (DB) → boxes → per-line recognition (CTC) → text. Horizontal and vertical
 //! lines are handled; arbitrary rotation is not.
@@ -10,8 +10,8 @@ use tiny_skia::Pixmap;
 
 pub use det::TextBox;
 
-static DET_MODEL: &[u8] = include_bytes!("../../../assets/ocr/ch_PP-OCRv4_det_infer.onnx");
-static REC_MODEL: &[u8] = include_bytes!("../../../assets/ocr/ch_PP-OCRv4_rec_infer.onnx");
+static DET_MODEL: &[u8] = include_bytes!("../../../assets/ocr/det_PP-OCRv4.onnx");
+static REC_MODEL: &[u8] = include_bytes!("../../../assets/ocr/rec_PP-OCRv5.onnx");
 static REC_KEYS: &str = include_str!("../../../assets/ocr/rec_keys.txt");
 
 /// Lowest recognition confidence that is still reported.

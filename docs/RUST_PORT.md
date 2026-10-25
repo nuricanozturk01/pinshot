@@ -1,84 +1,63 @@
-# Rust port
+# Project status
 
 Branch `main`. The old Python edition lives on the `master` branch and is no longer developed.
 
-## Goals
+## What works
 
-- Lower idle and peak resource use (no Qt, no Python runtime, no bundled interpreter).
-- One small native binary per platform.
-- Same features, same settings file, same shortcuts.
+Verified on Linux/X11 (3 monitors, Linux Mint): capture overlays with annotations, toolbar, pins and their context menu,
+OCR (Turkish and English checked by a test), MP4/GIF recording with system sound, tray, global hotkeys, single instance and
+CLI, settings window (shortcut capture, folder picker, autostart), About, colour picker, English/Turkish UI.
 
-## Status (where we stopped)
+Written but **not run on real hardware** (CI only compiles it): Windows capture and audio, macOS capture, audio and
+permissions, tray on Windows/macOS. Wayland capture goes through the desktop portal; it was exercised on X11 by forcing
+`XDG_SESSION_TYPE=wayland`, and a headless-sway CI job (`tools/wayland_ci.sh`) is set up but has not run yet.
 
-Working and tested on Linux/X11 (3 monitors): capture overlays with annotations, toolbar, pins + context menu,
-OCR (pure-Rust tract, PP-OCRv4), screen recording (MP4/GIF, system sound verified with PulseAudio/PipeWire),
-tray (ksni), global hotkeys, single instance + CLI, toasts, English/Turkish UI (system language by default).
+## Performance (release build, 3 monitors)
 
-Written but **not run on real hardware** (CI compiles them): Windows capture/audio (GDI, cpal), macOS capture/audio
-(CoreGraphics, avfoundation, audiotap helper), tray-icon on Windows/macOS.
+|                                             | Before  | Now                                            |
+| ------------------------------------------- | ------- | ---------------------------------------------- |
+| CPU while moving the mouse over the overlay | ~80 %   | ~1 %                                           |
+| Memory idle                                 | ~126 MB | ~28 MB                                         |
+| Memory with the overlay open                | ~140 MB | ~125-140 MB (screen copies and window buffers) |
+| Memory after the overlay closes             | ~97 MB  | ~55 MB                                         |
 
-### Next steps
+Changes behind this: the hint strip no longer forces a full-width redraw, the dim and loupe loops work on rows, grabs are
+converted in place, `mimalloc` replaces the glibc allocator and is collected when the overlay closes.
 
-1. Real-device checks: Windows and macOS (capture, system sound, permissions, installers), Wayland portal capture on a
-   real Wayland session (the portal path was only exercised on X11 by forcing `XDG_SESSION_TYPE=wayland`), folder picker
-   and autostart in the settings window. Screen recording on Wayland still uses X11 grabs (needs PipeWire).
-2. Known flake: the very first mouse press/release after the overlay opens was lost once with XTest; 20 scripted
-   runs did not reproduce it.
-3. Cut the first Rust release: push a tag `vX.Y.Z`; `.github/workflows/release.yml` builds every platform.
-4. Idle memory: ~126 MB RSS idle in release; investigate (fonts, ksni/zbus, embedded models are mapped lazily).
+## Next steps
 
-Done: settings window, About (`--about`), colour picker, `--selftest`, clippy clean (`-D warnings`), Wayland portal
-capture, macOS privacy-pane shortcut, packaging script (`packaging/package.py`, deb/tar.gz verified locally) and
-release workflow.
+1. Real-device checks on Windows and macOS (capture, system sound, permissions, installers) and on a real Wayland
+   session. Screen recording on Wayland still uses X11 grabs (needs PipeWire).
+2. Look at the first run of the Wayland CI job (`continue-on-error` until it is green, then make it required).
+3. Cut the first release: push a tag `vX.Y.Z`; `.github/workflows/release.yml` builds every platform.
+4. Known flake: the first mouse press after the overlay opens was lost once with synthetic XTest input; 20 scripted runs
+   did not reproduce it.
+5. Peak memory with the overlay open could drop further (one screen copy per monitor is the floor, plus the window
+   buffers).
 
 ## Architecture
 
-| Layer                                                                                                                                                                  | Crate / library                  | Status   |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | -------- |
-| Logic without a window system: geometry, annotations, editor state machine, undo/redo, rendering (tiny-skia), text, composition, config, shortcuts, i18n, pin geometry | `crates/core`                    | **done** |
-| OCR (PP-OCRv4 via tract)                                                                                                                                               | `crates/ocr`                     | **done** |
-| Recording (ffmpeg pipeline, audio)                                                                                                                                     | `crates/record`                  | **done** |
-| Widget kit drawn in software (buttons, sliders, toolbar)                                                                                                               | `crates/ui` (winit + softbuffer) | planned  |
-| Screens, hotkeys, tray, clipboard, dialogs, autostart, single instance                                                                                                 | `crates/platform`                | planned  |
-| OCR (PP-OCR ONNX models through `ort`)                                                                                                                                 | `crates/ocr`                     | planned  |
-| Recording (ffmpeg sidecar), audio (cpal / platform helpers), island                                                                                                    | `crates/record`                  | planned  |
-| The application                                                                                                                                                        | `crates/app` (`pinshot` binary)  | planned  |
+| Crate           | Role                                                                                                                                                      |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/core`   | No window system: geometry, annotations, editor state machine, undo/redo, rendering (tiny-skia), text, composition, config, shortcuts, i18n, pin geometry |
+| `crates/ocr`    | PP-OCRv4 detection + PP-OCRv5 Latin recognition, run with tract (pure Rust). Models live in `assets/ocr`                                                  |
+| `crates/record` | ffmpeg pipeline and audio capture (PulseAudio/PipeWire, WASAPI via cpal, macOS helper)                                                                    |
+| `crates/app`    | The `pinshot` program: winit + softbuffer windows, overlay, toolbar, pins, tray, hotkeys, settings, About, colour picker                                  |
 
-## Phases
+Windows are drawn in software (tiny-skia into a softbuffer surface) so the same code runs on every system; there is no Qt
+or GTK. The file dialog uses the desktop portal on Linux.
 
-0. Scaffold, CI. **done**
-1. Core crate with ports of the Python tests. **done**
-2. UI kit.
-3. Platform layer (Linux X11 first, then Windows, macOS).
-4. Capture overlay, editor, pins.
-5. OCR.
-6. Recording and audio.
-7. Settings dialog, About, CLI.
-8. Packaging (deb, dmg, exe) and release workflow.
+## Tooling
 
-## Parity checklist (Python → Rust)
+- `tools/fmt.sh` formats Rust (rustfmt) and YAML/Markdown (prettier); `--check` is what CI runs, `--install-hook` formats
+  on commit.
+- CI (`.github/workflows/rust.yml`): fmt + prettier + clippy with `-D warnings`, tests on Linux (x64, ARM), Windows and
+  macOS (ARM, Intel), and the headless Wayland job. The toolchain is `stable`, so run `rustup update stable` locally to match
+  the lints.
+- Release (`.github/workflows/release.yml`, `packaging/package.py`): `.deb` and `.tar.gz` (Linux), zip and Inno Setup
+  installer (Windows), ad-hoc signed `.app` in a `.dmg` (macOS). ffmpeg is bundled next to the program.
 
-- [x] Annotation shapes, hit testing, handles, shift constraints
-- [x] Undo/redo (geometry/text only)
-- [x] Rendering: rect, ellipse, line, arrow, pen, marker, text, number, mosaic, blur
-- [x] Multi-monitor composition with mixed scale factors
-- [x] Config file compatible with the Python edition
-- [x] Shortcut strings (including the macOS Control/Command swap)
-- [x] Saving PNG / JPG / WebP
-- [ ] Overlay editor, toolbar, pins
-- [ ] Global hotkeys, tray, single instance, CLI
-- [x] OCR, colour picker
-- [ ] MP4 / GIF recording, audio, island
-- [x] Settings dialog
-- [x] About
-- [x] Installers (script + workflow; deb/tar.gz built locally, Windows/macOS only by CI)
+## Known differences from the Python edition
 
-## Known differences
-
-- WebP is saved lossless: the pure-Rust encoder has no lossy mode, so the quality setting affects JPEG only.
-
-## Verification and risks
-
-Only Linux/X11 can be run on the development machine. Windows and macOS code is verified by CI builds and
-unit tests of the OS-independent parts; real-device checks (permissions, system sound, Retina, shortcuts) must be
-done by hand before a Rust release replaces the Python one.
+- WebP is saved lossless (the pure-Rust encoder has no lossy mode), so the quality setting affects JPEG only.
+- OCR uses a Latin-script model: Turkish and English work, Chinese, Japanese and Korean text does not.
