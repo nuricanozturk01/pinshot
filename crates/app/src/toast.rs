@@ -15,6 +15,8 @@ const MAX_TEXT_W: f32 = 460.0;
 
 pub struct Toast {
     pub sw: SoftWindow,
+    /// The painted notification: shown again whenever the compositor asks for the window's content.
+    pm: Pixmap,
     pub deadline: Instant,
     /// Command to run when the toast is clicked.
     pub click: Option<&'static str>,
@@ -64,6 +66,14 @@ pub fn paint(text: &str, sf: f32) -> Pixmap {
 }
 
 impl Toast {
+    /// Paint the notification again (expose events, the first frame after the window appears).
+    pub fn redraw(&mut self) {
+        self.sw.sync_size();
+        if let Err(e) = self.sw.present(&self.pm, (0, 0)) {
+            log::warn!("toast redraw: {e}");
+        }
+    }
+
     /// Show `text` near the bottom-right of the area `(x, y, w, h)` (physical pixels of one monitor).
     pub fn show(
         el: &ActiveEventLoop,
@@ -103,8 +113,10 @@ impl Toast {
         let mut sw = SoftWindow::new(ctx, window)?;
         sw.sync_size();
         sw.present(&pm, (0, 0))?;
+        sw.window.request_redraw(); // content drawn before the window is mapped can be lost
         Ok(Toast {
             sw,
+            pm,
             deadline: Instant::now() + Duration::from_secs(secs),
             click,
         })

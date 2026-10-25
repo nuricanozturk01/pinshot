@@ -2010,12 +2010,17 @@ impl ApplicationHandler<UserEvent> for App {
             Owner::About => return self.about_event(event),
             Owner::Color => return self.color_event(event),
             Owner::Toast => {
-                if let WindowEvent::MouseInput {
-                    state: ElementState::Pressed,
-                    ..
-                } = event
-                {
-                    self.toast_clicked(el, id);
+                match event {
+                    WindowEvent::RedrawRequested | WindowEvent::Resized(_) => {
+                        if let Some(t) = self.toasts.iter_mut().find(|t| t.sw.window.id() == id) {
+                            t.redraw();
+                        }
+                    }
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        ..
+                    } => self.toast_clicked(el, id),
+                    _ => {}
                 }
                 return;
             }
