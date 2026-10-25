@@ -50,7 +50,9 @@ fn run(fmt: Fmt, ext: &str, system_audio: bool) -> Option<(PathBuf, f64)> {
         },
     )
     .expect("recording starts");
-    std::thread::sleep(Duration::from_millis(2200));
+    // ffmpeg stamps frames with the clock when it reads them, so a slow start (a busy CI runner) shortens the
+    // recorded span; leave room for that so the duration checks below measure the recorder, not the runner
+    std::thread::sleep(Duration::from_millis(3200));
     rec.stop();
     loop {
         match rx.recv_timeout(Duration::from_secs(60)).expect("finishes") {
