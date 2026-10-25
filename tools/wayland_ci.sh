@@ -14,12 +14,19 @@ chmod 700 "$XDG_RUNTIME_DIR"
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway
 export WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
 export HOME="${HOME_OVERRIDE:-$(mktemp -d)}"
-mkdir -p "$HOME/.config/xdg-desktop-portal"
-printf '[preferred]\ndefault=wlr\n' > "$HOME/.config/xdg-desktop-portal/sway-portals.conf"
 export PINSHOT_LOG_STDERR=1 PINSHOT_DEBUG=1
 
-cat > "$OUT/sway.conf" <<'CONF'
-output HEADLESS-1 resolution 1280x720 position 0 0
+# An empty desktop is one flat colour and rightly counts as a blank capture, so give it a wallpaper with detail.
+python3 - "$OUT/wallpaper.png" <<'PY'
+import sys
+from PIL import Image
+img = Image.new("RGB", (1280, 720))
+img.putdata([((x * 255) // 1280, (y * 255) // 720, (x ^ y) & 255) for y in range(720) for x in range(1280)])
+img.save(sys.argv[1])
+PY
+
+cat > "$OUT/sway.conf" <<CONF
+output HEADLESS-1 resolution 1280x720 position 0 0 bg $OUT/wallpaper.png fill
 default_border none
 CONF
 
