@@ -73,6 +73,8 @@ struct OverlayWin {
     full: bool,
     /// The hint pill was part of the last frame.
     hint: bool,
+    /// The window outline shown in the last frame (its undimmed area changes only when this does).
+    hover_win: Option<Rect>,
     shown: bool,
 }
 
@@ -393,6 +395,7 @@ impl App {
                                 prev: None,
                                 full: true,
                                 hint: true,
+                                hover_win: None,
                                 shown: false,
                             });
                         }
@@ -537,7 +540,8 @@ impl App {
         let full = IRect::new(0, 0, pw, ph);
         let cur = ov.session.extent(&g);
         let hint = ov.session.editor.sel.is_none();
-        let damage = if w.full {
+        let hover_win = ov.session.editor.hover_win.filter(|_| hint);
+        let damage = if w.full || hover_win != w.hover_win {
             Some(full)
         } else {
             let moved = match (w.prev, cur) {
@@ -564,6 +568,7 @@ impl App {
             Ok(true) => {
                 w.prev = cur;
                 w.hint = hint;
+                w.hover_win = hover_win;
                 w.full = false;
                 if !w.shown {
                     w.shown = true;
@@ -2138,6 +2143,18 @@ impl ApplicationHandler<UserEvent> for App {
     }
 }
 
+/// winit's X11 backend panics when `libxkbcommon-x11` is missing, so only pick it when the library loads.
+#[cfg(target_os = "linux")]
+fn x11_keyboard_support() -> bool {
+    ["libxkbcommon-x11.so.0", "libxkbcommon-x11.so"].iter().any(|n| {
+        // SAFETY: loading the library runs its (trivial) initialisers; the handle is dropped right away.
+        #[expect(unsafe_code, reason = "dlopen probe, nothing from the library is called")]
+        unsafe {
+            libloading::Library::new(n).is_ok()
+        }
+    })
+}
+
 pub fn run(first_command: Option<String>) -> Result<(), String> {
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     #[cfg(target_os = "macos")]
@@ -2152,7 +2169,10 @@ pub fn run(first_command: Option<String>) -> Result<(), String> {
         // sessions (no DISPLAY) and `PINSHOT_BACKEND=wayland` keep the native backend.
         use winit::platform::x11::EventLoopBuilderExtX11;
         let want_native = std::env::var("PINSHOT_BACKEND").is_ok_and(|v| v == "wayland");
-        if !want_native && std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty()) {
+        if !want_native
+            && std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty())
+            && x11_keyboard_support()
+        {
             builder.with_x11();
         }
     }

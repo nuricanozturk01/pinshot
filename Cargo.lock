@@ -2960,6 +2960,7 @@ dependencies = [
  "image",
  "interprocess",
  "ksni",
+ "libloading 0.8.9",
  "libmimalloc-sys",
  "log",
  "mimalloc",

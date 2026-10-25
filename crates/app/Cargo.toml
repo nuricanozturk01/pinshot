@@ -35,6 +35,7 @@ auto-launch = "0.6"
 x11rb = { version = "0.14", features = ["randr", "xfixes", "xtest", "shm"] }
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "screenshot"] }
 async-io = "2"
+libloading = "0.8"
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 
 [target.'cfg(windows)'.dependencies]

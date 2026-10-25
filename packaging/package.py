@@ -141,7 +141,7 @@ def macos(arch: str) -> None:
             time.sleep(5)
 
 
-DEB_DEPENDS = "libc6, libxkbcommon0, libx11-6, libxcb1, libdbus-1-3"
+DEB_DEPENDS = "libc6, libxkbcommon0, libx11-6, libxkbcommon-x11-0, libxcb1, libdbus-1-3"
 
 
 def linux(arch: str) -> None:

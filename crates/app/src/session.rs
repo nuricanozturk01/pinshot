@@ -248,9 +248,6 @@ impl Session {
         if let Some(s) = self.sel_px(g.mon) {
             add(IRect::around(s.x, s.y, s.w, s.h).inflate((44.0 * g.sf) as i32));
         }
-        if let Some(s) = self.hover_px(g.mon) {
-            add(IRect::around(s.x, s.y, s.w, s.h).inflate(4));
-        }
         if let (Some(o), Some(p)) = (self.panel_origin(g), self.rec.as_ref()) {
             let (w, h) = p.size();
             add(IRect::around(o.x * g.sf, o.y * g.sf, w * g.sf, h * g.sf).inflate(4));
