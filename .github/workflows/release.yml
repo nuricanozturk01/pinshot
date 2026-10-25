@@ -1,14 +1,14 @@
 name: Release
 
-# Push a tag like v2.1.0  ->  builds every platform and publishes a GitHub Release with all downloads.
+# Push a tag like v2026.10.0  ->  builds every platform and publishes a GitHub Release with all downloads.
 # Manual run: Actions > Rust release > Run workflow. Give a tag to publish, or leave it empty to only build artifacts.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9][0-9][0-9][0-9].*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish, e.g. v2.1.0 (empty = build only, no release)"
+        description: "Tag to publish, e.g. v2026.10.0 (empty = build only, no release)"
         required: false
         default: ""
 

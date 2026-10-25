@@ -1,6 +1,6 @@
 """Packaging for the Rust edition.
 
-  python packaging/package.py stamp v2.1.0            set the workspace version (release builds)
+  python packaging/package.py stamp v2026.10.0            set the workspace version (release builds)
   python packaging/package.py pack --arch amd64       turn target/release into ./release/* artifacts
 
 `pack` expects `cargo build --release -p pinshot` to have run, and `imageio-ffmpeg` (pip) for the bundled ffmpeg.
@@ -37,8 +37,9 @@ def version() -> str:
 
 def stamp(tag: str) -> None:
     ver = tag.lstrip("v")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", ver):
-        sys.exit(f"invalid version {tag!r}: expected MAJOR.MINOR.PATCH")
+    m = re.fullmatch(r"(\d{4})\.(\d{1,2})\.(\d+)", ver)
+    if not m or not 1 <= int(m.group(2)) <= 12:
+        sys.exit(f"invalid version {tag!r}: expected YYYY.M.N (calendar version, e.g. v2026.10.0)")
     path = os.path.join(ROOT, "Cargo.toml")
     text = open(path, encoding="utf-8").read()
     new, n = re.subn(r'^version = "[^"]+"', f'version = "{ver}"', text, count=1, flags=re.M)

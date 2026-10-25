@@ -103,7 +103,7 @@ tools/fmt.sh                  # rustfmt + prettier (tools/fmt.sh --install-hook 
 ```
 
 Crates: `core` (annotations, rendering, config, shortcuts, i18n), `ocr`, `record` (ffmpeg and audio), `app` (the
-program). Status and notes: [docs/RUST_PORT.md](docs/RUST_PORT.md). Release: push a tag such as `v2.1.0`.
+program). Status and notes: [docs/RUST_PORT.md](docs/RUST_PORT.md). Versions are calendar based, `YYYY.M.N` (`N` counts releases within the month). Release: push a tag such as `v2026.10.0`.
 
 Settings are in `~/.config/PinShot/config.json` on Linux (a `PinShot` folder in your user directory elsewhere); logs are in
 `~/.local/share/PinShot/logs`.

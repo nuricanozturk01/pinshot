@@ -2946,7 +2946,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinshot"
-version = "2.1.0-dev"
+version = "2026.10.0-dev"
 dependencies = [
  "arboard",
  "ashpd",
@@ -2979,7 +2979,7 @@ dependencies = [
 
 [[package]]
 name = "pinshot-core"
-version = "2.1.0-dev"
+version = "2026.10.0-dev"
 dependencies = [
  "chrono",
  "directories",
@@ -2994,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "pinshot-ocr"
-version = "2.1.0-dev"
+version = "2026.10.0-dev"
 dependencies = [
  "log",
  "pinshot-core",
@@ -3004,7 +3004,7 @@ dependencies = [
 
 [[package]]
 name = "pinshot-record"
-version = "2.1.0-dev"
+version = "2026.10.0-dev"
 dependencies = [
  "cpal",
  "log",

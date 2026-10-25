@@ -29,7 +29,7 @@ converted in place, `mimalloc` replaces the glibc allocator and is collected whe
 1. Real-device checks on Windows and macOS (capture, system sound, permissions, installers) and on a real Wayland
    session. Screen recording on Wayland still uses X11 grabs (needs PipeWire).
 2. Look at the first run of the Wayland CI job (`continue-on-error` until it is green, then make it required).
-3. Cut the first release: push a tag `vX.Y.Z`; `.github/workflows/release.yml` builds every platform.
+3. Cut the first release: push a calendar-version tag such as `v2026.10.0` (`YYYY.M.N`); `.github/workflows/release.yml` builds every platform.
 4. Known flake: the first mouse press after the overlay opens was lost once with synthetic XTest input; 20 scripted runs
    did not reproduce it.
 5. Peak memory with the overlay open could drop further (one screen copy per monitor is the floor, plus the window
