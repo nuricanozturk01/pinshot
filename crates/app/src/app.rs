@@ -343,6 +343,7 @@ impl App {
         let Some(ctx) = self.ctx.as_ref() else { return };
         let color = Rgba::parse(&self.cfg.color).unwrap_or(Rgba::rgb(0xff, 0x3b, 0x30));
         let session = Session::new(caps, color, self.cfg.pen_width, self.cfg.font_px);
+        crate::mem::release_unused(); // the raw grab buffers are gone by now
         let mut session = session;
         if rec {
             session.rec = Some(self.make_panel(false));
@@ -1196,7 +1197,9 @@ impl App {
                     let proxy = self.proxy.clone();
                     let start = self.cfg.save_dir_path();
                     std::thread::spawn(move || {
+                        log::debug!("folder picker opens at {}", start.display());
                         let p = rfd::FileDialog::new().set_directory(start).pick_folder();
+                        log::debug!("folder picker returned {p:?}");
                         let _ = proxy.send_event(UserEvent::FolderChosen(p));
                     });
                 }

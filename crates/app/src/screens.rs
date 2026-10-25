@@ -54,23 +54,16 @@ pub fn monitor_at(monitors: &[Monitor], p: Point) -> Option<usize> {
         .or(if monitors.is_empty() { None } else { Some(0) })
 }
 
-/// Convert a BGRA/BGRX buffer (as delivered by X11, GDI and CoreGraphics) into an opaque pixmap.
-pub fn pixmap_from_bgrx(w: u32, h: u32, stride: usize, data: &[u8]) -> Option<Pixmap> {
-    let mut pm = Pixmap::new(w, h)?;
-    let dst = pm.data_mut();
-    for y in 0..h as usize {
-        let src = &data[y * stride..y * stride + w as usize * 4];
-        let out = &mut dst[y * w as usize * 4..(y + 1) * w as usize * 4];
-        for (o, s) in out
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .zip(src.as_chunks::<4>().0)
-        {
-            *o = [s[2], s[1], s[0], 255];
-        }
+/// Convert a tightly packed BGRA/BGRX buffer (X11, GDI, CoreGraphics) into an opaque pixmap in place: a full-screen grab is tens of
+/// megabytes and must not exist twice.
+pub fn pixmap_from_bgrx_owned(w: u32, h: u32, mut data: Vec<u8>) -> Option<Pixmap> {
+    if data.len() != w as usize * h as usize * 4 {
+        return None;
     }
-    Some(pm)
+    for px in data.as_chunks_mut::<4>().0 {
+        *px = [px[2], px[1], px[0], 255];
+    }
+    Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(w, h)?)
 }
 
 #[cfg(target_os = "linux")]
@@ -134,7 +127,7 @@ mod imp {
 
     pub fn grab_part(m: &Monitor, part: Rect) -> Result<Pixmap, String> {
         let (w, h, data) = grab_raw(m, part)?;
-        pixmap_from_bgrx(w, h, w as usize * 4, &data).ok_or_else(|| "bad image".to_string())
+        pixmap_from_bgrx_owned(w, h, data).ok_or_else(|| "bad image".to_string())
     }
 
     /// Grab `part` (desktop coordinates, inside the monitor) as tightly packed BGRX bytes, with no conversion. The
@@ -262,7 +255,7 @@ mod imp {
 
     pub fn grab_part(m: &Monitor, part: Rect) -> Result<Pixmap, String> {
         let (w, h, data) = grab_raw(m, part)?;
-        pixmap_from_bgrx(w, h, w as usize * 4, &data).ok_or_else(|| "bad image".to_string())
+        pixmap_from_bgrx_owned(w, h, data).ok_or_else(|| "bad image".to_string())
     }
 
     pub fn grab_raw(_m: &Monitor, part: Rect) -> Result<(u32, u32, Vec<u8>), String> {
@@ -365,7 +358,7 @@ mod imp {
 
     pub fn grab_part(m: &Monitor, part: Rect) -> Result<Pixmap, String> {
         let (w, h, data) = grab_raw(m, part)?;
-        pixmap_from_bgrx(w, h, w as usize * 4, &data).ok_or_else(|| "bad image".to_string())
+        pixmap_from_bgrx_owned(w, h, data).ok_or_else(|| "bad image".to_string())
     }
 
     pub fn grab_raw(m: &Monitor, part: Rect) -> Result<(u32, u32, Vec<u8>), String> {
@@ -570,22 +563,27 @@ mod tests {
 
     #[test]
     fn blank_detection_and_conversion() {
-        let flat = pixmap_from_bgrx(30, 30, 120, &[10u8; 30 * 30 * 4]).unwrap();
+        let flat = pixmap_from_bgrx_owned(30, 30, vec![10u8; 30 * 30 * 4]).unwrap();
         assert!(looks_blank(&flat));
         let mut data = vec![0u8; 30 * 30 * 4];
         data[(15 * 30 + 15) * 4] = 200;
-        let mut busy = pixmap_from_bgrx(30, 30, 120, &data).unwrap();
+        let mut busy = pixmap_from_bgrx_owned(30, 30, data).unwrap();
         for (i, p) in busy.data_mut().chunks_exact_mut(4).enumerate() {
             p[0] = (i % 251) as u8;
         }
         assert!(!looks_blank(&busy));
-        let one = pixmap_from_bgrx(1, 1, 4, &[1, 2, 3, 0]).unwrap();
+        let one = pixmap_from_bgrx_owned(1, 1, vec![1, 2, 3, 0]).unwrap();
         let p = one.pixel(0, 0).unwrap();
         assert_eq!(
             (p.red(), p.green(), p.blue(), p.alpha()),
             (3, 2, 1, 255),
             "BGRX becomes RGBA"
         );
+    }
+
+    #[test]
+    fn owned_conversion_rejects_a_wrong_length() {
+        assert!(pixmap_from_bgrx_owned(3, 2, vec![0; 5]).is_none());
     }
 
     #[test]
