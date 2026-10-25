@@ -707,7 +707,13 @@ pub mod tests {
         let mut shown = s.compose(&g, all);
         let (mut prev, mut prev_core) = (s.extent(&g).unwrap(), s.draw_core(&g).unwrap());
         // grows, shrinks, and crosses the anchor so the size label jumps to another corner
-        for to in [(380.0, 290.0), (330.0, 200.0), (100.0, 40.0), (20.0, 20.0), (60.0, 260.0)] {
+        for to in [
+            (380.0, 290.0),
+            (330.0, 200.0),
+            (100.0, 40.0),
+            (20.0, 20.0),
+            (60.0, 260.0),
+        ] {
             s.editor.moved(Point::new(to.0, to.1), false);
             let (cur, cur_core) = (s.extent(&g).unwrap(), s.draw_core(&g));
             let union = prev.union(&cur);
