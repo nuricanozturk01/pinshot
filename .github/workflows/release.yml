@@ -1,14 +1,14 @@
 name: Release
 
-# Push a tag like v1.0.0  ->  builds every platform, then publishes a GitHub Release with all downloads.
-# Manual run:  Actions > Release > Run workflow. Give a tag to publish, or leave it empty to only build artifacts.
+# Push a tag like v2.1.0  ->  builds every platform and publishes a GitHub Release with all downloads.
+# Manual run: Actions > Rust release > Run workflow. Give a tag to publish, or leave it empty to only build artifacts.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish, e.g. v1.0.0 (empty = build only, no release)"
+        description: "Tag to publish, e.g. v2.1.0 (empty = build only, no release)"
         required: false
         default: ""
 
@@ -20,109 +20,70 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  CARGO_TERM_COLOR: always
   RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
 
 jobs:
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.experimental }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: "Linux amd64",   runner: ubuntu-22.04,    arch: amd64, experimental: false }
-          - { name: "Linux arm64",   runner: ubuntu-24.04-arm, arch: arm64, experimental: false }
-          - { name: "Windows amd64", runner: windows-latest,  arch: amd64, experimental: false }
-          # Windows arm64 is switched off for now; uncomment to build it again (experimental):
-          # - { name: "Windows arm64", runner: windows-11-arm,  arch: arm64, experimental: true }
-          - { name: "macOS arm64",   runner: macos-15,        arch: arm64, experimental: false }
-          - { name: "macOS amd64",   runner: macos-15-intel,  arch: amd64, experimental: false }
+          - { name: "Linux amd64", runner: ubuntu-22.04, arch: amd64 }
+          - { name: "Linux arm64", runner: ubuntu-24.04-arm, arch: arm64 }
+          - { name: "Windows amd64", runner: windows-latest, arch: amd64 }
+          - { name: "macOS arm64", runner: macos-15, arch: arm64 }
+          - { name: "macOS amd64", runner: macos-15-intel, arch: amd64 }
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
       - name: Stamp version from tag
         if: env.RELEASE_TAG != ''
-        run: python tools/set_version.py "$RELEASE_TAG"
+        run: python packaging/package.py stamp "$RELEASE_TAG"
 
       - name: System libraries (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 \
-            libfontconfig1 libdbus-1-3 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-shape0 libxcb-xkb1 dpkg-dev
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[build,test]"
-          # headless OpenCV: same API, ~100 MB smaller bundle, no GTK dependency
-          if python -c "import cv2" 2>/dev/null; then
-            pip uninstall -y opencv-python
-            pip install --force-reinstall --no-deps opencv-python-headless
-          fi
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libx11-dev libxcb1-dev libdbus-1-dev dpkg-dev
 
       - name: Build macOS system-sound helper (Swift, ScreenCaptureKit)
         if: runner.os == 'macOS'
-        run: tools/ci_run.sh "swiftc audiotap" bash packaging/macos/build_audiotap.sh
-
-      - name: Generate icons
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python tools/make_icons.py
-
-      - name: Build application (PyInstaller)
-        run: pyinstaller --noconfirm --clean packaging/pinshot.spec
-
-      - name: Sign bundled ffmpeg and audio helper (macOS, required on Apple Silicon)
-        if: runner.os == 'macOS'
-        run: |
-          find dist/PinShot.app -type f \( -name 'ffmpeg-*' -o -name 'pinshot-audiotap' \) ! -type l -exec chmod 755 {} \; -exec codesign --force --sign - {} \;
-
-      - name: Self-test built app (Linux / macOS)
-        if: runner.os != 'Windows'
-        timeout-minutes: 5
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then BIN="dist/PinShot.app/Contents/MacOS/PinShot"; else BIN="dist/PinShot/PinShot"; fi
-          "$BIN" --selftest "$PWD/selftest.txt" || true
-          cat selftest.txt
-          grep -q "RESULT OK" selftest.txt || echo "::error title=self-test failed::$(grep -E 'FAIL|Error|assert' selftest.txt | head -8 | tr '\n' ' ')"
-          grep -q "RESULT OK" selftest.txt
-
-      - name: Self-test built app (Windows)
-        if: runner.os == 'Windows'
-        timeout-minutes: 5
-        shell: pwsh
-        run: |
-          $p = Start-Process -FilePath "dist\PinShot\PinShot.exe" -ArgumentList "--selftest","$PWD\selftest.txt" -Wait -PassThru
-          if (Test-Path selftest.txt) { Get-Content selftest.txt }
-          if ($p.ExitCode -ne 0) { throw "self-test failed with exit code $($p.ExitCode)" }
-          if (-not (Select-String -Path selftest.txt -Pattern "RESULT OK" -Quiet)) { throw "self-test did not report OK" }
+        run: bash packaging/macos/build_audiotap.sh
 
       - name: Install Inno Setup (Windows installer)
         if: runner.os == 'Windows'
-        continue-on-error: true      # without it only the portable zip is produced
+        continue-on-error: true # without it only the portable zip is produced
         run: choco install innosetup -y --no-progress
 
+      - run: pip install imageio-ffmpeg
+      - run: cargo build --release -p pinshot
+
+      - name: Self-test the built binary
+        timeout-minutes: 5
+        run: |
+          ./target/release/pinshot --version
+          # no display on CI runners: only the checks that do not need one must pass
+          ./target/release/pinshot --selftest || true
+
       - name: Package
-        run: python packaging/package.py --arch ${{ matrix.arch }}
+        run: python packaging/package.py pack --arch ${{ matrix.arch }}
 
       - name: Verify .deb installs and starts (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get install -y ./release/*.deb
           pinshot --version
+          test -x /opt/pinshot/ffmpeg
 
       - uses: actions/upload-artifact@v4
         with:
@@ -166,15 +127,9 @@ jobs:
           fail_on_unmatched_files: true
           files: artifacts/*
           body: |
-            ## Downloads
-            | Platform | amd64 / x64 | arm64 |
-            |---|---|---|
-            | Windows | `*-windows-amd64-setup.exe` (installer) or `.zip` (portable) | not available for now |
-            | macOS | `*-macos-amd64.dmg` (Intel) | `*-macos-arm64.dmg` (Apple Silicon) |
-            | Linux | `*-linux-amd64.deb` / `.tar.gz` | `*-linux-arm64.deb` / `.tar.gz` |
+            Rust edition: one native binary, no Python or Qt. Settings file and shortcuts are compatible with the Python edition.
 
-            Verify downloads with `SHA256SUMS.txt`.
-
-            **macOS:** the app is ad-hoc signed, not notarised. On first launch right-click the app > Open, then grant
-            *Screen Recording* (and *Accessibility* for global hotkeys) in System Settings > Privacy & Security.
-            **Linux:** `sudo apt install ./PinShot-*.deb`. Wayland: global hotkeys are unavailable; bind a desktop shortcut to `pinshot --capture`.
+            **macOS:** ad-hoc signed, not notarised. On first launch right-click the app > Open, then grant
+            *Screen Recording* (and *Microphone* when recording audio) in System Settings > Privacy & Security.
+            **Linux:** `sudo apt install ./PinShot-*.deb`. Wayland captures through the desktop portal; global hotkeys may be
+            unavailable, bind a desktop shortcut to `pinshot --capture`.

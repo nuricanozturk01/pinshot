@@ -3,7 +3,8 @@
 !.github/
 !.github/workflows/
 !.github/workflows/rust.yml
-!.github/workflows/rust-release.yml
+!.github/workflows/release.yml
 !docs/
 !docs/RUST_PORT.md
 !.prettierrc.json
+!README.md

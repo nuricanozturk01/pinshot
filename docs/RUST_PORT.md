@@ -1,6 +1,6 @@
 # Rust port
 
-Branch `rust`. The Python edition on `master` stays the released product until this port reaches parity.
+Branch `main`. The old Python edition lives on the `master` branch and is no longer developed.
 
 ## Goals
 
@@ -24,12 +24,11 @@ Written but **not run on real hardware** (CI compiles them): Windows capture/aud
    and autostart in the settings window. Screen recording on Wayland still uses X11 grabs (needs PipeWire).
 2. Known flake: the very first mouse press/release after the overlay opens was lost once with XTest; 20 scripted
    runs did not reproduce it.
-3. Cut the first Rust release: tag `rust-vX.Y.Z` runs `.github/workflows/rust-release.yml` (pre-release). Replacing the
-   Python build means merging `rust` into `master` and pointing `release.yml` at `packaging/rust/package.py`.
+3. Cut the first Rust release: push a tag `vX.Y.Z`; `.github/workflows/release.yml` builds every platform.
 4. Idle memory: ~126 MB RSS idle in release; investigate (fonts, ksni/zbus, embedded models are mapped lazily).
 
 Done: settings window, About (`--about`), colour picker, `--selftest`, clippy clean (`-D warnings`), Wayland portal
-capture, macOS privacy-pane shortcut, packaging script (`packaging/rust/package.py`, deb/tar.gz verified locally) and
+capture, macOS privacy-pane shortcut, packaging script (`packaging/package.py`, deb/tar.gz verified locally) and
 release workflow.
 
 ## Architecture

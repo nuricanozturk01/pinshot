@@ -1,8 +1,8 @@
-name: Rust
+name: CI
 
 on:
   push:
-    branches: [rust]
+    branches: [main]
     paths:
       [
         "crates/**",
@@ -13,6 +13,7 @@ on:
         "rustfmt.toml",
         ".prettierrc.json",
         ".github/workflows/rust.yml",
+        "packaging/**",
       ]
   pull_request:
     paths:
@@ -25,6 +26,7 @@ on:
         "rustfmt.toml",
         ".prettierrc.json",
         ".github/workflows/rust.yml",
+        "packaging/**",
       ]
 
 permissions:
