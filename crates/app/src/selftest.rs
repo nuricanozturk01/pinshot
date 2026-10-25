@@ -21,7 +21,10 @@ pub fn run() -> i32 {
     let path = Config::default_path();
     report(
         "config",
-        Ok(format!("{} (loads with defaults when missing)", path.display())),
+        Ok(format!(
+            "{} (loads with defaults when missing)",
+            path.display()
+        )),
         &mut failed,
     );
     report(

@@ -556,8 +556,10 @@ mod tests {
             Some(Kind::Blur),
             Some(Kind::Number),
         ] {
-            let mut t = Toolbar::default();
-            t.prop_kind = kind;
+            let mut t = Toolbar {
+                prop_kind: kind,
+                ..Toolbar::default()
+            };
             t.relayout();
             let (w, h) = t.size();
             for (i, a) in t.elems.iter().enumerate() {
@@ -596,8 +598,10 @@ mod tests {
 
     #[test]
     fn clicks_map_to_events() {
-        let mut t = Toolbar::default();
-        t.prop_kind = Some(Kind::Text);
+        let mut t = Toolbar {
+            prop_kind: Some(Kind::Text),
+            ..Toolbar::default()
+        };
         t.relayout();
         t.font_px = 28;
         let c = centre(&t, Id::Tool(Tool::Draw(Kind::Arrow)));
@@ -626,8 +630,10 @@ mod tests {
 
     #[test]
     fn slider_maps_position_to_value_and_drags() {
-        let mut t = Toolbar::default();
-        t.prop_kind = Some(Kind::Pen);
+        let mut t = Toolbar {
+            prop_kind: Some(Kind::Pen),
+            ..Toolbar::default()
+        };
         t.relayout();
         let r = t.elems.iter().find(|e| e.id == Id::Slider).unwrap().rect;
         assert_eq!(
@@ -650,8 +656,10 @@ mod tests {
 
     #[test]
     fn toggles_flip_current_state_and_font_is_clamped() {
-        let mut t = Toolbar::default();
-        t.prop_kind = Some(Kind::Rect);
+        let mut t = Toolbar {
+            prop_kind: Some(Kind::Rect),
+            ..Toolbar::default()
+        };
         t.relayout();
         t.fill = true;
         assert_eq!(t.press(centre(&t, Id::Fill)), Some(Event::Fill(false)));
@@ -681,8 +689,10 @@ mod tests {
 
     #[test]
     fn drawing_does_not_panic_and_paints_the_active_tool() {
-        let mut t = Toolbar::default();
-        t.prop_kind = Some(Kind::Rect);
+        let mut t = Toolbar {
+            prop_kind: Some(Kind::Rect),
+            ..Toolbar::default()
+        };
         t.relayout();
         t.tool = Tool::Draw(Kind::Rect);
         t.hover = Some(0);

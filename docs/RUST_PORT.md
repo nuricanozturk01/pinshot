@@ -19,14 +19,14 @@ Written but **not run on real hardware** (CI compiles them): Windows capture/aud
 
 ### Next steps
 1. ~~Settings window~~ done (`settingswin.rs`: shortcut capture, folder picker, autostart, apply → hotkeys/language). Only opened and logged on X11; click-through not yet automated.
-2. About window (version, author link, log folder).
-3. Custom colour picker popup (toolbar "+" button currently only logs).
-4. Fix known flake: the very first mouse press/release after the overlay opens is sometimes not delivered when input
+2. Known flake: the very first mouse press/release after the overlay opens is sometimes not delivered when input
    is synthesised with XTest (`crates/app/examples/xdrive.rs`); the editor already recovers from a lost release.
-5. macOS permission helper (screen recording, input monitoring, microphone) and Wayland portal capture.
-6. Self-test (`--selftest`), packaging (deb/dmg/exe + bundled ffmpeg), release workflow, replace the Python build.
-7. Idle memory: ~126 MB RSS idle in release; investigate (fonts, ksni/zbus, embedded models are mapped lazily).
-8. Run `cargo clippy --workspace --all-targets -- -D warnings` and fix the warnings of the new crates.
+3. macOS permission helper (screen recording, input monitoring, microphone) and Wayland portal capture.
+4. Packaging (deb/dmg/exe + bundled ffmpeg), release workflow, replace the Python build.
+5. Idle memory: ~126 MB RSS idle in release; investigate (fonts, ksni/zbus, embedded models are mapped lazily).
+6. Click-through checks of the settings window, About and colour picker (only opened on X11 so far).
+
+Done since: settings window, About (`--about`), colour picker, `--selftest`, clippy clean (`-D warnings`).
 
 ## Architecture
 
@@ -64,10 +64,10 @@ Written but **not run on real hardware** (CI compiles them): Windows capture/aud
 - [x] Saving PNG / JPG / WebP
 - [ ] Overlay editor, toolbar, pins
 - [ ] Global hotkeys, tray, single instance, CLI
-- [ ] OCR, colour picker
+- [x] OCR, colour picker
 - [ ] MP4 / GIF recording, audio, island
 - [x] Settings dialog
-- [ ] About
+- [x] About
 - [ ] Installers
 
 ## Known differences

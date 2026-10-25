@@ -202,6 +202,6 @@ mod tests {
         src[0] = 255;
         let r = rotate90(&src, 2, 3);
         // after clockwise rotation the top-left pixel ends in the top-right of the 3x2 result
-        assert_eq!(r[(0 * 3 + 2) * 3], 255);
+        assert_eq!(r[2 * 3], 255);
     }
 }

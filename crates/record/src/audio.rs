@@ -79,7 +79,6 @@ fn pcm_path(kind: &str) -> PathBuf {
 /// A program that writes PCM into `path`; it is stopped by writing "q" to its stdin (it also ends on EOF).
 struct ChildCapture {
     child: Child,
-    path: PathBuf,
     err_path: PathBuf,
 }
 
@@ -116,11 +115,7 @@ impl ChildCapture {
                 }
             });
         }
-        let mut cap = ChildCapture {
-            child,
-            path: path.to_path_buf(),
-            err_path,
-        };
+        let mut cap = ChildCapture { child, err_path };
         let end = Instant::now() + timeout;
         while Instant::now() < end {
             let up = if ready_line.is_some() {
@@ -261,7 +256,7 @@ pub fn parse_avf_audio_devices(stderr: &str) -> Vec<(u32, String)> {
                 // the last "[n] name" on the line (the line starts with ffmpeg's own "[AVFoundation indev @ ...]")
                 if let Some(start) = line[..=b]
                     .rmatches('[')
-                    .nth(0)
+                    .next()
                     .map(|_| line[..=b].rfind('[').unwrap_or(a))
                 {
                     if let Ok(i) = line[start + 1..b].parse::<u32>() {
@@ -281,6 +276,10 @@ pub fn is_virtual(name: &str) -> bool {
     VIRTUAL_HINTS.iter().any(|h| n.contains(h)) || n.contains("aggregate")
 }
 
+#[cfg_attr(
+    not(target_os = "macos"),
+    expect(dead_code, reason = "used by the macOS capture path")
+)]
 fn avf_devices(exe: &Path) -> Vec<(u32, String)> {
     let Ok(o) = Command::new(exe)
         .args([
@@ -299,6 +298,10 @@ fn avf_devices(exe: &Path) -> Vec<(u32, String)> {
     parse_avf_audio_devices(&String::from_utf8_lossy(&o.stderr))
 }
 
+#[cfg_attr(
+    not(target_os = "macos"),
+    expect(dead_code, reason = "used by the macOS capture path")
+)]
 fn audiotap_helper() -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(d) = std::env::var_os("PINSHOT_AUDIOTAP_DIR") {
@@ -731,6 +734,10 @@ impl AudioRecorder {
     /// Ask the captures to stop (used right when the video stops, so both end at the same moment).
     pub fn request_stop(&mut self) {
         for s in &mut self.sources {
+            #[cfg_attr(
+                not(windows),
+                expect(irrefutable_let_patterns, reason = "Cpal exists on Windows only")
+            )]
             if let Capturing::Child(c) = &mut s.cap {
                 c.request_stop();
             }

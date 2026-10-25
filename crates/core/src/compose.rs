@@ -50,13 +50,13 @@ pub fn compose_region(screens: &[Screen<'_>], region: Rect) -> Option<(Pixmap, f
         let dx = ((part.x - region.x) * scale).round() as i32;
         let dy = ((part.y - region.y) * scale).round() as i32;
         if (s.scale - scale).abs() < 1e-4 {
-            copy_rows(&s.pixmap, &mut out, sx, sy, sw, sh, dx, dy);
+            copy_rows(s.pixmap, &mut out, sx, sy, sw, sh, dx, dy);
         } else {
             let (tw, th) = (
                 (part.w * scale).round() as i32,
                 (part.h * scale).round() as i32,
             );
-            scale_rows(&s.pixmap, &mut out, (sx, sy, sw, sh), (dx, dy, tw, th));
+            scale_rows(s.pixmap, &mut out, (sx, sy, sw, sh), (dx, dy, tw, th));
         }
     }
     Some((out, scale))

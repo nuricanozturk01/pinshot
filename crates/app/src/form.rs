@@ -22,7 +22,6 @@ pub enum Control {
     },
     Hotkey(String),
     Folder(String),
-    Text(String),
 }
 
 #[derive(Clone, Debug)]
@@ -106,9 +105,7 @@ impl Form {
         match c {
             Control::Section => *row,
             Control::Check(_) => Rect::new(row.right() - 34.0, row.y + 6.0, 34.0, 22.0),
-            Control::Folder(_) | Control::Text(_) => {
-                Rect::new(row.x + 150.0, row.y + 3.0, row.w - 150.0, 28.0)
-            }
+            Control::Folder(_) => Rect::new(row.x + 150.0, row.y + 3.0, row.w - 150.0, 28.0),
             _ => Rect::new(row.x + 190.0, row.y + 3.0, row.w - 190.0, 28.0),
         }
     }
@@ -168,7 +165,7 @@ impl Form {
                 Some(Event::Capture(id))
             }
             Control::Folder(_) => Some(Event::Browse(id)),
-            Control::Text(_) | Control::Section => None,
+            Control::Section => None,
         }
     }
 
@@ -271,7 +268,7 @@ impl Form {
                     };
                     cv.text_centered(c, t, 12.0, Rgba::WHITE, false);
                 }
-                Control::Folder(path) | Control::Text(path) => {
+                Control::Folder(path) => {
                     cv.fill_rrect(c, 6.0, theme::FIELD_BG);
                     let max = c.w - 16.0;
                     let mut s = path.clone();

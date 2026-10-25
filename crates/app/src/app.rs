@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WKey, ModifiersState, NamedKey};
@@ -45,7 +45,6 @@ pub enum UserEvent {
     OcrDone(u64, Result<String, String>),
     RecordNow(Box<rec::RecordRequest>),
     Rec(pinshot_record::Event),
-    Toast(String),
     FolderChosen(Option<PathBuf>),
 }
 
@@ -348,7 +347,7 @@ impl App {
         let handles: Vec<_> = el.available_monitors().collect();
         for (i, cap) in session.caps.iter().enumerate() {
             let r = cap.monitor.rect;
-            let (pw, ph) = (cap.pixmap.width(), cap.pixmap.height());
+            let (_pw, _ph) = (cap.pixmap.width(), cap.pixmap.height());
             let mut attrs = Window::default_attributes()
                 .with_title("PinShot")
                 .with_decorations(false)
@@ -1287,7 +1286,7 @@ impl App {
             return;
         }
         let Some(ctx) = self.ctx.as_ref() else { return };
-        let at = screens::cursor_pos().map(|g| Point::new(g.x as f32, g.y as f32));
+        let at = screens::cursor_pos().map(|g| Point::new(g.x, g.y));
         match ColorWin::create(el, ctx, start, at) {
             Ok(w) => {
                 self.owners.insert(w.sw.window.id(), Owner::Color);
@@ -1326,8 +1325,7 @@ impl App {
                 button: MouseButton::Left,
                 ..
             } => {
-                // the press position is the last cursor position
-                let hit = w.hover;
+                let hit = w.press();
                 w.sw.window.request_redraw();
                 match hit {
                     Some(CBtn::Ok) => {
@@ -1970,7 +1968,6 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Rec(e) => self.rec_event(el, e),
             UserEvent::PinSaveChosen(id, p) => self.pin_save_chosen(el, id, p),
             UserEvent::PinFilesChosen(files) => self.pin_files_chosen(el, files),
-            UserEvent::Toast(t) => self.toast(el, &t),
             UserEvent::FolderChosen(p) => self.folder_chosen(p),
         }
     }

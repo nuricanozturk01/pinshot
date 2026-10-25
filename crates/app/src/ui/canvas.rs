@@ -24,7 +24,7 @@ pub fn paint(c: Rgba) -> Paint<'static> {
 
 pub fn rrect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<Path> {
     let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
-    let k = 0.552_284_75 * r;
+    let k = 0.552_284_8 * r;
     let mut pb = PathBuilder::new();
     pb.move_to(x + r, y);
     pb.line_to(x + w - r, y);
@@ -84,30 +84,6 @@ impl<'a> Canvas<'a> {
             let tf = self.tf();
             self.pm
                 .fill_path(&p, &paint(c), FillRule::Winding, tf, None);
-        }
-    }
-
-    pub fn stroke_rrect(&mut self, r: Rect, radius: f32, width: f32, c: Rgba) {
-        // inset by half the stroke so the outline stays inside `r`
-        let h = width / 2.0;
-        if let Some(p) = rrect_path(
-            self.s(r.x + h),
-            self.s(r.y + h),
-            self.s(r.w - width),
-            self.s(r.h - width),
-            self.s(radius),
-        ) {
-            let tf = self.tf();
-            self.pm.stroke_path(
-                &p,
-                &paint(c),
-                &Stroke {
-                    width: self.s(width),
-                    ..Stroke::default()
-                },
-                tf,
-                None,
-            );
         }
     }
 

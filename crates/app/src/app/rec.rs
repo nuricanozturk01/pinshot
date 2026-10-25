@@ -8,6 +8,7 @@ use pinshot_record::ffmpeg::Fmt;
 use pinshot_record::{Event as RecEvent, Options as RecOptions, Recorder, Stats};
 
 pub struct RecUi {
+    #[expect(dead_code, reason = "owns the frame windows; dropping it closes them")]
     pub frame: RecFrame,
     pub island: Island,
     pub shared: SharedRect,
@@ -332,7 +333,7 @@ impl App {
         let untouched = before
             .map(|b| b == clip_fingerprint(&mut self.clip))
             .unwrap_or(true);
-        let copied = untouched && self.clip.set_files(&[path.clone()]).is_ok();
+        let copied = untouched && self.clip.set_files(std::slice::from_ref(&path)).is_ok();
         let mb = std::fs::metadata(&path)
             .map(|m| m.len() as f64 / 1024.0 / 1024.0)
             .unwrap_or(0.0);
@@ -425,12 +426,10 @@ impl App {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
-            } => {
-                if r.ui.island.drag.take().is_some() {
-                    let rect = r.ui.island.rect();
-                    self.cfg.island_pos = Some([rect.x as i32, rect.y as i32]);
-                    self.save_cfg();
-                }
+            } if r.ui.island.drag.take().is_some() => {
+                let rect = r.ui.island.rect();
+                self.cfg.island_pos = Some([rect.x as i32, rect.y as i32]);
+                self.save_cfg();
             }
             _ => {}
         }

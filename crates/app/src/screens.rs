@@ -51,7 +51,7 @@ pub fn monitor_at(monitors: &[Monitor], p: Point) -> Option<usize> {
     monitors
         .iter()
         .position(|m| m.rect.contains(p))
-        .or_else(|| if monitors.is_empty() { None } else { Some(0) })
+        .or(if monitors.is_empty() { None } else { Some(0) })
 }
 
 /// Convert a BGRA/BGRX buffer (as delivered by X11, GDI and CoreGraphics) into an opaque pixmap.

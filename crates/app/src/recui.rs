@@ -41,6 +41,7 @@ fn plain_window(
 
 /// Four thin strips around the recorded area (outside it, so they never appear in the video).
 pub struct RecFrame {
+    #[expect(dead_code, reason = "owns the strip windows; dropping it closes them")]
     pub strips: Vec<SoftWindow>,
 }
 
@@ -184,7 +185,7 @@ impl Island {
                 theme::BAR_BORDER,
                 false,
             );
-            let blink = self.secs % 2 == 0;
+            let blink = self.secs.is_multiple_of(2);
             cv.fill_circle(
                 20.0,
                 ISLAND_H / 2.0,

@@ -148,10 +148,8 @@ pub fn video_args(
         ]
         .map(String::from),
     );
-    if !to_file || (o.fmt == Fmt::Mp4 && !o.with_audio) {
-        if target != temp {
-            a.extend(["-movflags", "+faststart"].map(String::from));
-        }
+    if (!to_file || (o.fmt == Fmt::Mp4 && !o.with_audio)) && target != temp {
+        a.extend(["-movflags", "+faststart"].map(String::from));
     }
     a.push(target.to_string_lossy().into_owned());
     a

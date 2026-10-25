@@ -34,6 +34,7 @@ pub struct ColorWin {
     s: f32,
     v: f32,
     drag: Option<Drag>,
+    last: (f64, f64),
     sf: f32,
 }
 
@@ -99,6 +100,7 @@ impl ColorWin {
             s,
             v,
             drag: None,
+            last: (0.0, 0.0),
             sf,
         };
         w.draw();
@@ -138,6 +140,7 @@ impl ColorWin {
 
     /// Returns true when a redraw is needed.
     pub fn moved(&mut self, x: f64, y: f64) -> bool {
+        self.last = (x, y);
         let p = self.ui(x, y);
         if let Some(d) = self.drag {
             self.set_from(d, p);
@@ -150,9 +153,9 @@ impl ColorWin {
         std::mem::replace(&mut self.hover, b) != b
     }
 
-    /// Mouse press: returns the button hit, if any.
-    pub fn press(&mut self, x: f64, y: f64) -> Option<Btn> {
-        let p = self.ui(x, y);
+    /// Mouse press at the last cursor position: returns the button hit, if any.
+    pub fn press(&mut self) -> Option<Btn> {
+        let p = self.ui(self.last.0, self.last.1);
         if let Some((b, _)) = Self::buttons().into_iter().find(|(_, r)| r.contains(p)) {
             return Some(b);
         }

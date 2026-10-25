@@ -37,7 +37,6 @@ pub struct Session {
     pub cursor: Option<Point>,
     pub tooltip: Option<(String, Rect)>,
     /// Set while a modal popup (record options, colour picker) is open above the toolbar.
-    pub popup_open: bool,
     /// Recording options (replaces the toolbar while recording is being set up).
     pub rec: Option<RecPanel>,
     /// The overlay was opened by the record command (cancelling closes it).
@@ -60,7 +59,6 @@ impl Session {
             toolbar: Toolbar::default(),
             cursor: None,
             tooltip: None,
-            popup_open: false,
             rec: None,
             rec_flow: false,
         };
@@ -101,10 +99,6 @@ impl Session {
     }
 
     // ------------------------------------------------------------------ geometry
-    pub fn px_per_unit(&self, mon: usize) -> f32 {
-        self.caps[mon].monitor.scale
-    }
-
     /// Desktop point → pixel in the window of monitor `mon`.
     pub fn to_px(&self, mon: usize, p: Point) -> Point {
         let m = &self.caps[mon].monitor;
@@ -112,6 +106,10 @@ impl Session {
     }
 
     /// Window pixel → desktop point.
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "reads as the inverse of to_px"
+    )]
     pub fn from_px(&self, mon: usize, p: Point) -> Point {
         let m = &self.caps[mon].monitor;
         Point::new(m.rect.x + p.x / m.scale, m.rect.y + p.y / m.scale)

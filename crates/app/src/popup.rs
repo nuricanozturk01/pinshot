@@ -100,7 +100,6 @@ pub enum Outcome {
     None,
     /// An item was chosen; the menu should close.
     Chosen(&'static str),
-    Close,
 }
 
 impl Popup {

@@ -115,7 +115,7 @@ pub fn to_hotkey(c: &Combo) -> Option<HotKey> {
         m |= Modifiers::SHIFT;
     }
     if c.cmd {
-        m |= Modifiers::SUPER;
+        m |= Modifiers::META;
     }
     Some(HotKey::new(
         if m.is_empty() { None } else { Some(m) },
@@ -199,7 +199,7 @@ mod tests {
         );
         assert_eq!(
             to_hotkey(&parse_stored("<cmd>+<shift>+p").unwrap()).unwrap(),
-            HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyP)
+            HotKey::new(Some(Modifiers::META | Modifiers::SHIFT), Code::KeyP)
         );
         assert!(to_hotkey(&Combo {
             key: "<banana>".into(),

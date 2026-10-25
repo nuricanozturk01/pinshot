@@ -12,7 +12,6 @@ pub const TEXT_DIM: Rgba = Rgba::rgb(0x77, 0x77, 0x77);
 pub const FIELD_BG: Rgba = Rgba::rgb(0x1b, 0x1b, 0x1d);
 pub const PILL_BG: Rgba = Rgba::new(20, 20, 22, 215);
 pub const DANGER: Rgba = Rgba::rgb(0xff, 0x45, 0x3a);
-pub const WINDOW_BG: Rgba = Rgba::rgb(0x2b, 0x2b, 0x2f);
 
 pub const SWATCHES: [&str; 8] = [
     "#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#0a84ff", "#af52de", "#ffffff", "#000000",
