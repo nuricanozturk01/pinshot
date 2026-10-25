@@ -28,10 +28,11 @@ mod toolbar;
 mod tray;
 mod ui;
 
-const COMMANDS: [(&str, &str); 9] = [
+const COMMANDS: [(&str, &str); 10] = [
     ("--capture", "capture"),
     ("--fullscreen", "fullscreen"),
     ("--repeat", "repeat"),
+    ("--window", "window"),
     ("--pin-clipboard", "pin_clipboard"),
     ("--record", "record"),
     ("--stop-recording", "stop_record"),

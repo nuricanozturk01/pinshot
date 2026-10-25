@@ -160,6 +160,21 @@ impl Session {
         Some(Rect::from_points(a, b))
     }
 
+    /// The window under the pointer (shown before a selection exists) on monitor `mon`, in that window's pixels.
+    fn hover_px(&self, mon: usize) -> Option<Rect> {
+        let win = self
+            .editor
+            .hover_win
+            .filter(|_| self.editor.sel.is_none())?;
+        let part = self.caps[mon].monitor.rect.intersection(&win);
+        if part.is_empty() {
+            return None;
+        }
+        let a = self.to_px(mon, part.top_left());
+        let b = self.to_px(mon, Point::new(part.right(), part.bottom()));
+        Some(Rect::from_points(a, b))
+    }
+
     /// Toolbar top-left in the host window's UI units, if the toolbar is visible there.
     pub fn toolbar_origin(&self, g: &Geom) -> Option<Point> {
         if self.rec.is_some()
@@ -233,6 +248,9 @@ impl Session {
         if let Some(s) = self.sel_px(g.mon) {
             add(IRect::around(s.x, s.y, s.w, s.h).inflate((44.0 * g.sf) as i32));
         }
+        if let Some(s) = self.hover_px(g.mon) {
+            add(IRect::around(s.x, s.y, s.w, s.h).inflate(4));
+        }
         if let (Some(o), Some(p)) = (self.panel_origin(g), self.rec.as_ref()) {
             let (w, h) = p.size();
             add(IRect::around(o.x * g.sf, o.y * g.sf, w * g.sf, h * g.sf).inflate(4));
@@ -275,6 +293,9 @@ impl Session {
         let sf = g.sf;
         let mut cv = Canvas::with_offset(&mut out, sf, (damage.x as f32, damage.y as f32));
 
+        if let Some(vis) = self.hover_px(g.mon) {
+            Self::draw_window_hint(&mut cv, cap, vis, damage, sf);
+        }
         if let Some(sel) = self.editor.sel {
             if let Some(vis) = self.sel_px(g.mon) {
                 self.draw_selection_content(&mut cv, cap, vis, damage);
@@ -282,7 +303,7 @@ impl Session {
             }
         } else if self.editor.mode == pinshot_core::editor::Mode::Idle {
             let txt = pinshot_core::i18n::tr(
-                "Alanı seçmek için sürükle  ·  Ctrl+A tüm ekran  ·  C renk kopyala  ·  Esc iptal",
+                "Alanı seçmek için sürükle  ·  Pencere için tıkla  ·  Ctrl+A tüm ekran  ·  C renk kopyala  ·  Esc iptal",
             );
             let w = cv.text_width(txt, 12.0, false) + 16.0;
             cv.pill((g.size.0 as f32 / sf - w) / 2.0, 24.0, txt);
@@ -308,6 +329,27 @@ impl Session {
             }
         }
         out
+    }
+
+    /// Show the window under the pointer undimmed, with an outline.
+    fn draw_window_hint(cv: &mut Canvas, cap: &Capture, vis: Rect, damage: IRect, sf: f32) {
+        let region = IRect::around(vis.x, vis.y, vis.w, vis.h);
+        if let Some(sub) = crop(&cap.pixmap, region) {
+            let paint = PixmapPaint {
+                blend_mode: tiny_skia::BlendMode::Source,
+                ..PixmapPaint::default()
+            };
+            cv.pm.draw_pixmap(
+                region.x - damage.x,
+                region.y - damage.y,
+                sub.as_ref(),
+                &paint,
+                Transform::identity(),
+                None,
+            );
+        }
+        let ui_vis = Rect::new(vis.x / sf, vis.y / sf, vis.w / sf, vis.h / sf);
+        cv.stroke_rect(ui_vis, 2.0, theme::ACCENT, false);
     }
 
     fn draw_selection_content(&self, cv: &mut Canvas, cap: &Capture, vis: Rect, damage: IRect) {

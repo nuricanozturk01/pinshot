@@ -71,7 +71,7 @@ impl OcrWin {
     ) -> Result<OcrWin, String> {
         let attrs = Window::default_attributes()
             .with_title("PinShot – OCR")
-            .with_resizable(false)
+            .with_resizable(crate::gfx::DIALOG_RESIZABLE)
             .with_inner_size(crate::gfx::size_px(W * sf, H * sf, sf))
             .with_position(crate::gfx::win_pos(at.x, at.y))
             .with_window_level(WindowLevel::AlwaysOnTop);
@@ -134,6 +134,7 @@ impl OcrWin {
     }
 
     pub fn draw(&mut self) {
+        self.sw.ensure_ui_size(W, H, self.sf);
         self.sw.sync_size();
         let (pw, ph) = self.sw.size();
         let mut pm = Pixmap::new(pw, ph).expect("size");

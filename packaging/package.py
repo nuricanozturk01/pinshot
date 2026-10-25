@@ -141,7 +141,7 @@ def macos(arch: str) -> None:
             time.sleep(5)
 
 
-DEB_DEPENDS = "libc6, libxkbcommon0, libx11-6, libxcb1, libdbus-1-3, pulseaudio-utils"
+DEB_DEPENDS = "libc6, libxkbcommon0, libx11-6, libxcb1, libdbus-1-3"
 
 
 def linux(arch: str) -> None:
@@ -179,7 +179,7 @@ def linux(arch: str) -> None:
             Architecture: {arch}
             Installed-Size: {size_kb}
             Depends: {DEB_DEPENDS}
-            Recommends: xdg-desktop-portal
+            Recommends: xdg-desktop-portal, pulseaudio-utils | pipewire-bin
             Maintainer: Nuri Can OZTURK <noreply@example.com>
             Description: Screenshot, annotate, OCR, pin and screen-record tool
              Region capture with annotation tools, offline OCR, always-on-top pinned images

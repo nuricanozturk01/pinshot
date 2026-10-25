@@ -8,20 +8,22 @@ use std::path::{Path, PathBuf};
 pub const CONFIG_VERSION: u32 = 2;
 
 /// macOS: Option turns the key into another character (`Option+A` types "å"), and F3 is Mission Control.
-pub fn default_hotkeys(mac: bool) -> [(&'static str, &'static str); 5] {
+pub fn default_hotkeys(mac: bool) -> [(&'static str, &'static str); 6] {
     if mac {
         [
             ("hotkey_capture", "<ctrl>+<shift>+a"),
             ("hotkey_fullscreen", "<ctrl>+<shift>+f"),
             ("hotkey_repeat", "<ctrl>+<shift>+r"),
+            ("hotkey_window", "<ctrl>+<shift>+w"),
             ("hotkey_record", "<ctrl>+<shift>+v"),
             ("hotkey_pin", "<ctrl>+<shift>+p"),
         ]
     } else {
         [
-            ("hotkey_capture", "<ctrl>+<alt>+a"),
+            ("hotkey_capture", "<print_screen>"),
             ("hotkey_fullscreen", "<ctrl>+<alt>+f"),
             ("hotkey_repeat", "<ctrl>+<alt>+r"),
+            ("hotkey_window", "<ctrl>+<alt>+w"),
             ("hotkey_record", "<ctrl>+<alt>+v"),
             ("hotkey_pin", "<f3>"),
         ]
@@ -53,6 +55,7 @@ pub struct Config {
     pub hotkey_capture: String,
     pub hotkey_fullscreen: String,
     pub hotkey_repeat: String,
+    pub hotkey_window: String,
     pub hotkey_record: String,
     pub hotkey_pin: String,
     pub record_format: String,
@@ -88,6 +91,7 @@ impl Default for Config {
             hotkey_capture: hk("hotkey_capture"),
             hotkey_fullscreen: hk("hotkey_fullscreen"),
             hotkey_repeat: hk("hotkey_repeat"),
+            hotkey_window: hk("hotkey_window"),
             hotkey_record: hk("hotkey_record"),
             hotkey_pin: hk("hotkey_pin"),
             record_format: "mp4".into(),
@@ -229,6 +233,7 @@ impl Config {
             ("capture", &self.hotkey_capture),
             ("fullscreen", &self.hotkey_fullscreen),
             ("repeat", &self.hotkey_repeat),
+            ("window", &self.hotkey_window),
             ("record", &self.hotkey_record),
             ("pin", &self.hotkey_pin),
         ]
@@ -253,8 +258,8 @@ mod tests {
     #[test]
     fn defaults_for_each_platform() {
         let win = default_hotkeys(false);
-        assert_eq!(win[0], ("hotkey_capture", "<ctrl>+<alt>+a"));
-        assert_eq!(win[4], ("hotkey_pin", "<f3>"));
+        assert_eq!(win[0], ("hotkey_capture", "<print_screen>"));
+        assert_eq!(win[5], ("hotkey_pin", "<f3>"));
         let mac = default_hotkeys(true);
         assert!(mac.iter().all(|(_, v)| v.starts_with("<ctrl>+<shift>+")));
     }
@@ -325,6 +330,6 @@ mod tests {
             ..Config::default()
         };
         let names: Vec<&str> = c.hotkeys().iter().map(|(k, _)| *k).collect();
-        assert_eq!(names, ["capture", "fullscreen", "repeat"]);
+        assert_eq!(names, ["capture", "fullscreen", "repeat", "window"]);
     }
 }

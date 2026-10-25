@@ -12,10 +12,11 @@ const GIF_FPS: [i32; 5] = [10, 15, 24, 30, 50];
 const GIF_WIDTHS: [i32; 5] = [640, 960, 1280, 1920, 0];
 const VIDEO_WIDTHS: [i32; 4] = [1280, 1920, 2560, 0];
 const LANGUAGES: [&str; 3] = ["auto", "en", "tr"];
-pub const HOTKEY_ROWS: [(&str, &str); 5] = [
+pub const HOTKEY_ROWS: [(&str, &str); 6] = [
     ("hotkey_capture", "Bölge yakala"),
     ("hotkey_fullscreen", "Tam ekran yakala"),
     ("hotkey_repeat", "Son bölgeyi tekrarla"),
+    ("hotkey_window", "Aktif pencereyi yakala"),
     ("hotkey_pin", "Panodan sabitle"),
     ("hotkey_record", "Ekran kaydını başlat / durdur"),
 ];
@@ -157,6 +158,7 @@ pub fn build(cfg: &Config, mac: bool, width: f32, height: f32) -> Form {
             "hotkey_capture" => &cfg.hotkey_capture,
             "hotkey_fullscreen" => &cfg.hotkey_fullscreen,
             "hotkey_repeat" => &cfg.hotkey_repeat,
+            "hotkey_window" => &cfg.hotkey_window,
             "hotkey_pin" => &cfg.hotkey_pin,
             _ => &cfg.hotkey_record,
         };
@@ -228,6 +230,7 @@ pub fn apply(form: &Form, cfg: &mut Config, mac: bool) {
                 "hotkey_capture" => cfg.hotkey_capture = stored,
                 "hotkey_fullscreen" => cfg.hotkey_fullscreen = stored,
                 "hotkey_repeat" => cfg.hotkey_repeat = stored,
+                "hotkey_window" => cfg.hotkey_window = stored,
                 "hotkey_pin" => cfg.hotkey_pin = stored,
                 _ => cfg.hotkey_record = stored,
             }

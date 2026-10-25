@@ -41,7 +41,7 @@ impl SettingsWin {
     ) -> Result<SettingsWin, String> {
         let attrs = Window::default_attributes()
             .with_title(format!("PinShot – {}", tr("Ayarlar")))
-            .with_resizable(false)
+            .with_resizable(crate::gfx::DIALOG_RESIZABLE)
             .with_inner_size(winit::dpi::LogicalSize::new(f64::from(W), f64::from(H)));
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         let sf = window.scale_factor() as f32;
@@ -106,6 +106,7 @@ impl SettingsWin {
     }
 
     pub fn draw(&mut self) {
+        self.sw.ensure_ui_size(W, H, self.sf);
         self.sw.sync_size();
         let (pw, ph) = self.sw.size();
         let Some(mut pm) = Pixmap::new(pw, ph) else {

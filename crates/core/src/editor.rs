@@ -204,6 +204,10 @@ pub struct Editor {
     /// Union of all monitors.
     pub bounds: Rect,
     pub sel: Option<Rect>,
+    /// On-screen windows, top-most first: a click without a drag selects the one under the pointer.
+    pub windows: Vec<Rect>,
+    /// The window under the pointer while no selection exists.
+    pub hover_win: Option<Rect>,
     pub items: Vec<Item>,
     pub history: History,
     pub tool: Tool,
@@ -231,6 +235,8 @@ impl Editor {
         Editor {
             bounds,
             sel: None,
+            windows: Vec::new(),
+            hover_win: None,
             items: Vec::new(),
             history: History::default(),
             tool: Tool::Select,
@@ -602,8 +608,23 @@ impl Editor {
                     annotate::drag_handle(it, spec, pt, shift);
                 }
             }
-            Mode::Idle => {}
+            Mode::Idle => {
+                self.hover_win = if self.sel.is_none() {
+                    self.window_at(pt)
+                } else {
+                    None
+                };
+            }
         }
+    }
+
+    /// The top-most window under `pt`, limited to the capturable area.
+    pub fn window_at(&self, pt: Point) -> Option<Rect> {
+        self.windows
+            .iter()
+            .find(|w| w.contains(pt))
+            .map(|w| self.clamp(*w))
+            .filter(|w| w.w >= MIN_SELECTION && w.h >= MIN_SELECTION)
     }
 
     pub fn release(&mut self) {
@@ -615,8 +636,10 @@ impl Editor {
                     .map(|s| s.w < MIN_SELECTION || s.h < MIN_SELECTION)
                     .unwrap_or(false)
                 {
-                    self.sel = None;
+                    // a plain click picks the window under the pointer
+                    self.sel = self.hover_win.or_else(|| self.window_at(self.anchor));
                 }
+                self.hover_win = None;
             }
             Mode::Draw => {
                 if let Some(it) = self.cur.take() {

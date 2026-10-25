@@ -16,6 +16,11 @@ pub fn win_pos(x: f32, y: f32) -> winit::dpi::Position {
     }
 }
 
+/// Whether fixed-size dialogs must be left resizable. winit's Wayland backend pins a non-resizable window's min/max
+/// to its inner size before the client-side title bar exists, so the compositor then squeezes the content area by the
+/// title bar's height and clips the dialog's bottom row. Those dialogs lay out at a fixed size anyway.
+pub const DIALOG_RESIZABLE: bool = cfg!(target_os = "linux");
+
 /// A size given in desktop units.
 pub fn size_units(w: f32, h: f32) -> winit::dpi::Size {
     if cfg!(target_os = "macos") {
@@ -140,6 +145,21 @@ impl SoftWindow {
 
     pub fn size(&self) -> (u32, u32) {
         self.size
+    }
+
+    /// Ask for a bigger window when the compositor handed out less than the `w` x `h` UI units a dialog lays
+    /// out for (some Wayland compositors subtract the title bar from the requested size). Never shrinks.
+    pub fn ensure_ui_size(&self, w: f32, h: f32, sf: f32) {
+        let s = self.window.inner_size();
+        let (want_w, want_h) = ((w * sf).round() as u32, (h * sf).round() as u32);
+        if s.width < want_w || s.height < want_h {
+            let _ = self
+                .window
+                .request_inner_size(winit::dpi::PhysicalSize::new(
+                    s.width.max(want_w),
+                    s.height.max(want_h),
+                ));
+        }
     }
 
     /// Draw `pm` (which shows the window region starting at `at`) into the window. When the buffer's previous

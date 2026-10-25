@@ -23,6 +23,7 @@ pub fn entries() -> Vec<Entry> {
         ),
         Entry::Item("fullscreen", "Tam ekran yakala"),
         Entry::Item("repeat", "Son bölgeyi tekrarla"),
+        Entry::Item("window", "Aktif pencereyi yakala"),
         Entry::Sep,
         Entry::Item("record", "Ekranı video olarak kaydet (GIF / MP4)…"),
         Entry::Sep,

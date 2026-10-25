@@ -71,7 +71,7 @@ mod imp {
     use super::*;
     use x11rb::connection::Connection;
     use x11rb::protocol::randr::ConnectionExt as _;
-    use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, ImageFormat, MapState};
     use x11rb::rust_connection::RustConnection;
 
     fn conn() -> Result<(RustConnection, usize), String> {
@@ -158,6 +158,105 @@ mod imp {
         })
     }
 
+    fn atom(c: &RustConnection, name: &str) -> Option<u32> {
+        c.intern_atom(false, name.as_bytes())
+            .ok()?
+            .reply()
+            .ok()
+            .map(|r| r.atom)
+    }
+
+    /// A 32-bit property (window ids, atoms, cardinals) of `win`; empty when it is missing.
+    fn prop32(c: &RustConnection, win: u32, name: &str) -> Vec<u32> {
+        let Some(prop) = atom(c, name) else {
+            return Vec::new();
+        };
+        c.get_property(false, win, prop, AtomEnum::ANY, 0, 4096)
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .and_then(|r| r.value32().map(Iterator::collect))
+            .unwrap_or_default()
+    }
+
+    /// The window's outer rectangle on the root window, decorations included when the window manager says how big
+    /// they are.
+    fn window_rect(c: &RustConnection, root: u32, win: u32) -> Option<Rect> {
+        let geo = c.get_geometry(win).ok()?.reply().ok()?;
+        let at = c
+            .translate_coordinates(win, root, 0, 0)
+            .ok()?
+            .reply()
+            .ok()?;
+        let (mut x, mut y) = (f32::from(at.dst_x), f32::from(at.dst_y));
+        let (mut w, mut h) = (f32::from(geo.width), f32::from(geo.height));
+        if let [l, r, t, b] = prop32(c, win, "_NET_FRAME_EXTENTS")[..] {
+            x -= l as f32;
+            y -= t as f32;
+            w += (l + r) as f32;
+            h += (t + b) as f32;
+        }
+        Some(Rect::new(x, y, w, h))
+    }
+
+    /// Is `win` something the user would call a window, on the current desktop and not minimised?
+    fn is_candidate(c: &RustConnection, win: u32, desktop: Option<u32>) -> bool {
+        let viewable = c
+            .get_window_attributes(win)
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .is_some_and(|a| a.map_state == MapState::VIEWABLE);
+        if !viewable {
+            return false;
+        }
+        let hidden = atom(c, "_NET_WM_STATE_HIDDEN");
+        if prop32(c, win, "_NET_WM_STATE")
+            .iter()
+            .any(|s| Some(*s) == hidden)
+        {
+            return false;
+        }
+        let skip = ["_NET_WM_WINDOW_TYPE_DESKTOP", "_NET_WM_WINDOW_TYPE_DOCK"]
+            .iter()
+            .filter_map(|n| atom(c, n))
+            .collect::<Vec<_>>();
+        if prop32(c, win, "_NET_WM_WINDOW_TYPE")
+            .iter()
+            .any(|t| skip.contains(t))
+        {
+            return false;
+        }
+        match (prop32(c, win, "_NET_WM_DESKTOP").first(), desktop) {
+            (Some(&d), Some(cur)) => d == cur || d == u32::MAX,
+            _ => true,
+        }
+    }
+
+    /// Visible top-level windows, top-most first.
+    pub fn windows() -> Result<Vec<Rect>, String> {
+        let (c, n) = conn()?;
+        let root = c.setup().roots[n].root;
+        let desktop = prop32(&c, root, "_NET_CURRENT_DESKTOP").first().copied();
+        let mut list = prop32(&c, root, "_NET_CLIENT_LIST_STACKING");
+        list.reverse(); // the property is bottom-to-top
+        Ok(list
+            .into_iter()
+            .filter(|w| is_candidate(&c, *w, desktop))
+            .filter_map(|w| window_rect(&c, root, w))
+            .filter(|r| r.w > 0.0 && r.h > 0.0)
+            .collect())
+    }
+
+    /// The window that has the keyboard focus.
+    pub fn active_window() -> Option<Rect> {
+        let (c, n) = conn().ok()?;
+        let root = c.setup().roots[n].root;
+        let win = *prop32(&c, root, "_NET_ACTIVE_WINDOW").first()?;
+        if win == 0 {
+            return None;
+        }
+        window_rect(&c, root, win)
+    }
+
     thread_local! {
         static POINTER_CONN: std::cell::RefCell<Option<(RustConnection, usize)>> = const { std::cell::RefCell::new(None) };
     }
@@ -202,7 +301,7 @@ mod imp {
 mod imp {
     use super::*;
     use windows::core::BOOL;
-    use windows::Win32::Foundation::{LPARAM, POINT, RECT};
+    use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -293,6 +392,77 @@ mod imp {
             }
             Ok((w as u32, h as u32, buf))
         }
+    }
+
+    fn window_bounds(h: HWND) -> Option<Rect> {
+        use windows::Win32::Graphics::Dwm::{
+            DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongW, GetWindowRect, IsIconic, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+        };
+        unsafe {
+            if !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+                return None;
+            }
+            if GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 {
+                return None;
+            }
+            let mut cloaked = 0u32;
+            if DwmGetWindowAttribute(
+                h,
+                DWMWA_CLOAKED,
+                &mut cloaked as *mut _ as *mut _,
+                std::mem::size_of::<u32>() as u32,
+            )
+            .is_ok()
+                && cloaked != 0
+            {
+                return None; // on another virtual desktop, or a suspended UWP shell
+            }
+            // the frame without the invisible resize borders; fall back to the plain rectangle
+            let mut r = RECT::default();
+            if DwmGetWindowAttribute(
+                h,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                &mut r as *mut _ as *mut _,
+                std::mem::size_of::<RECT>() as u32,
+            )
+            .is_err()
+            {
+                GetWindowRect(h, &mut r).ok()?;
+            }
+            let (w, hh) = ((r.right - r.left) as f32, (r.bottom - r.top) as f32);
+            (w > 0.0 && hh > 0.0).then(|| Rect::new(r.left as f32, r.top as f32, w, hh))
+        }
+    }
+
+    unsafe extern "system" fn window_cb(h: HWND, data: LPARAM) -> BOOL {
+        let list = &mut *(data.0 as *mut Vec<Rect>);
+        if let Some(r) = window_bounds(h) {
+            list.push(r);
+        }
+        BOOL(1)
+    }
+
+    /// Visible top-level windows, top-most first (EnumWindows walks the z-order from the top).
+    pub fn windows() -> Result<Vec<Rect>, String> {
+        use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
+        let mut list: Vec<Rect> = Vec::new();
+        unsafe {
+            EnumWindows(Some(window_cb), LPARAM(&mut list as *mut _ as isize))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(list)
+    }
+
+    pub fn active_window() -> Option<Rect> {
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        let h = unsafe { GetForegroundWindow() };
+        if h.0.is_null() {
+            return None;
+        }
+        window_bounds(h)
     }
 
     pub fn buttons_down() -> bool {
@@ -387,6 +557,15 @@ mod imp {
         Ok((w, h, out))
     }
 
+    /// Window picking is not implemented on macOS yet; area selection works as before.
+    pub fn windows() -> Result<Vec<Rect>, String> {
+        Ok(Vec::new())
+    }
+
+    pub fn active_window() -> Option<Rect> {
+        None
+    }
+
     pub fn cursor_pos() -> Option<Point> {
         let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
         let p = CGEvent::new(src).ok()?.location();
@@ -429,7 +608,9 @@ pub fn screen_access(_request: bool) -> bool {
 
 #[cfg(target_os = "macos")]
 pub use imp::screen_access;
-pub use imp::{buttons_down, cursor_pos, grab, grab_part, grab_raw, monitors};
+pub use imp::{
+    active_window, buttons_down, cursor_pos, grab, grab_part, grab_raw, monitors, windows,
+};
 
 /// Wayland: X11 grabs return black, so the screenshot portal is asked for the whole desktop and cut per monitor.
 #[cfg(target_os = "linux")]

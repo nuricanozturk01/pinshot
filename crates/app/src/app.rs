@@ -240,6 +240,7 @@ impl App {
             (self.cfg.hotkey_capture.clone(), "capture"),
             (self.cfg.hotkey_fullscreen.clone(), "fullscreen"),
             (self.cfg.hotkey_repeat.clone(), "repeat"),
+            (self.cfg.hotkey_window.clone(), "window"),
             (self.cfg.hotkey_pin.clone(), "pin_clipboard"),
             (self.cfg.hotkey_record.clone(), "record"),
         ]
@@ -265,6 +266,7 @@ impl App {
             "capture" => self.schedule_capture(150),
             "fullscreen" => self.capture_fullscreen(el),
             "repeat" => self.capture_last_region(el),
+            "window" => self.capture_active_window(el),
             c if c.starts_with("delay:") => {
                 let secs: u64 = c[6..].parse().unwrap_or(3);
                 self.toast(el, &format!("{secs} {}", tr("saniye sonra yakalanacak")));
@@ -343,11 +345,16 @@ impl App {
             return;
         }
         let Some(caps) = self.grab(el) else { return };
+        // listed before the overlay exists, so it does not offer itself
+        let windows = screens::windows()
+            .map_err(|e| log::warn!("window list: {e}"))
+            .unwrap_or_default();
         let Some(ctx) = self.ctx.as_ref() else { return };
         let color = Rgba::parse(&self.cfg.color).unwrap_or(Rgba::rgb(0xff, 0x3b, 0x30));
         let session = Session::new(caps, color, self.cfg.pen_width, self.cfg.font_px);
         crate::mem::release_unused(); // the raw grab buffers are gone by now
         let mut session = session;
+        session.editor.windows = windows;
         if rec {
             session.rec = Some(self.make_panel(false));
             session.rec_flow = true;
@@ -417,6 +424,20 @@ impl App {
         let pm = caps.into_iter().nth(idx).map(|c| c.pixmap);
         if let Some(pm) = pm {
             self.finish_image(el, &pm, tr("Tam ekran"));
+        }
+    }
+
+    /// Capture the window that has the focus, decorations included.
+    fn capture_active_window(&mut self, el: &ActiveEventLoop) {
+        let Some(rect) = screens::active_window() else {
+            self.toast(el, tr("Aktif pencere bulunamadı"));
+            return;
+        };
+        let Some(caps) = self.grab(el) else { return };
+        let screens: Vec<_> = caps.iter().map(|c| c.screen()).collect();
+        match pinshot_core::compose::compose_region(&screens, rect) {
+            Some((pm, _)) => self.finish_image(el, &pm, tr("Aktif pencere")),
+            None => self.toast(el, tr("Aktif pencere bulunamadı")),
         }
     }
 
@@ -2123,6 +2144,17 @@ pub fn run(first_command: Option<String>) -> Result<(), String> {
     {
         use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
         builder.with_activation_policy(ActivationPolicy::Accessory);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Wayland compositors let a client neither place its windows nor read the global pointer, which pins,
+        // menus and the capture overlay rely on; XWayland gives every desktop the same behaviour. Pure Wayland
+        // sessions (no DISPLAY) and `PINSHOT_BACKEND=wayland` keep the native backend.
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        let want_native = std::env::var("PINSHOT_BACKEND").is_ok_and(|v| v == "wayland");
+        if !want_native && std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty()) {
+            builder.with_x11();
+        }
     }
     let el = builder.build().map_err(|e| e.to_string())?;
     let proxy = el.create_proxy();

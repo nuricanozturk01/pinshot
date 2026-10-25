@@ -84,7 +84,7 @@ impl ColorWin {
     ) -> Result<ColorWin, String> {
         let mut attrs = Window::default_attributes()
             .with_title(format!("PinShot – {}", tr("Renk")))
-            .with_resizable(false)
+            .with_resizable(crate::gfx::DIALOG_RESIZABLE)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_inner_size(winit::dpi::LogicalSize::new(f64::from(W), f64::from(H)));
         if let Some(p) = at {
@@ -178,6 +178,7 @@ impl ColorWin {
     }
 
     pub fn draw(&mut self) {
+        self.sw.ensure_ui_size(W, H, self.sf);
         self.sw.sync_size();
         let (pw, ph) = self.sw.size();
         let Some(mut pm) = Pixmap::new(pw, ph) else {

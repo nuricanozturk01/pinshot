@@ -83,7 +83,7 @@ detail by default; turn that off in the panel if a player cannot play it.
 The commands talk to the running PinShot, which makes them handy for desktop shortcuts.
 
 ```
-pinshot --capture | --fullscreen | --repeat | --record | --stop-recording | --pin-clipboard | --settings | --about | --quit
+pinshot --capture | --fullscreen | --repeat | --window | --record | --stop-recording | --pin-clipboard | --settings | --about | --quit
 pinshot --selftest
 ```
 
