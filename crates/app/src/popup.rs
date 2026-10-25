@@ -52,8 +52,8 @@ impl MenuWin {
             .with_title("PinShot")
             .with_decorations(false)
             .with_resizable(false)
-            .with_inner_size(crate::gfx::size_px(pw, ph, sf))
-            .with_position(crate::gfx::win_pos(x, y))
+            .with_inner_size(crate::units::size_px(pw, ph, sf))
+            .with_position(crate::units::win_pos(x, y))
             .with_window_level(WindowLevel::AlwaysOnTop);
         let attrs = crate::gfx::tool_window(attrs);
         #[cfg(target_os = "linux")]
@@ -155,10 +155,10 @@ impl Popup {
                 self.stack.truncate(level + 1);
                 let w = &mut self.stack[level];
                 w.open_sub = Some(r);
-                let base = crate::gfx::outer_rect(&w.sw.window);
+                let base = crate::units::outer_rect(&w.sw.window);
                 let rect = w.rows[r];
                 // desktop units per logical UI unit
-                let u = if cfg!(target_os = "macos") { 1.0 } else { w.sf };
+                let u = crate::units::per_ui(w.sf);
                 let at = Point::new(base.x + (w.size.0 - 4.0) * u, base.y + rect.y * u - 5.0);
                 let sf = w.sf;
                 if let Ok(child) = MenuWin::create(el, ctx, items, at, sf, bounds) {

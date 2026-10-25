@@ -48,8 +48,8 @@ impl PinWin {
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(true)
-            .with_inner_size(crate::gfx::size_units(w, h))
-            .with_position(crate::gfx::win_pos(at.x, at.y))
+            .with_inner_size(crate::units::size_units(w, h))
+            .with_position(crate::units::win_pos(at.x, at.y))
             .with_window_level(WindowLevel::AlwaysOnTop);
         let attrs = crate::gfx::tool_window(attrs);
         #[cfg(target_os = "linux")]
@@ -89,8 +89,8 @@ impl PinWin {
     pub fn set_geom(&mut self, g: Rect) {
         self.geom = g;
         let w = &self.sw.window;
-        let _ = w.request_inner_size(crate::gfx::size_units(g.w, g.h));
-        w.set_outer_position(crate::gfx::win_pos(g.x, g.y));
+        let _ = w.request_inner_size(crate::units::size_units(g.w, g.h));
+        w.set_outer_position(crate::units::win_pos(g.x, g.y));
         self.cache = None;
         w.request_redraw();
     }

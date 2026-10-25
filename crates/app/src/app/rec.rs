@@ -232,8 +232,8 @@ impl App {
         let all: Vec<Rect> = mons.iter().map(|m| m.rect).collect();
         let (sf, _) = self.monitor_info(el, req.region.center());
         let isize = (
-            recui::ISLAND_W * if cfg!(target_os = "macos") { 1.0 } else { sf },
-            recui::ISLAND_H * if cfg!(target_os = "macos") { 1.0 } else { sf },
+            recui::ISLAND_W * crate::units::per_ui(sf),
+            recui::ISLAND_H * crate::units::per_ui(sf),
         );
         let saved = self
             .cfg
@@ -409,7 +409,7 @@ impl App {
                     r.ui.island
                         .sw
                         .window
-                        .set_outer_position(crate::gfx::win_pos(g.x - off.x, g.y - off.y));
+                        .set_outer_position(crate::units::win_pos(g.x - off.x, g.y - off.y));
                     *r.ui.shared.lock().expect("island rect") = Some(Rect::new(
                         g.x - off.x,
                         g.y - off.y,
@@ -438,21 +438,9 @@ impl App {
                 ) else {
                     return;
                 };
-                let rect = crate::gfx::outer_rect(&r.ui.island.sw.window);
-                let local = Point::new(
-                    (g.x - rect.x)
-                        * if cfg!(target_os = "macos") {
-                            r.ui.island.sf
-                        } else {
-                            1.0
-                        },
-                    (g.y - rect.y)
-                        * if cfg!(target_os = "macos") {
-                            r.ui.island.sf
-                        } else {
-                            1.0
-                        },
-                );
+                let rect = crate::units::outer_rect(&r.ui.island.sw.window);
+                let k = crate::units::px_per_unit(r.ui.island.sf);
+                let local = Point::new((g.x - rect.x) * k, (g.y - rect.y) * k);
                 let _ = pos;
                 if r.ui.island.hits_stop(local) {
                     return self.stop_recording(el);

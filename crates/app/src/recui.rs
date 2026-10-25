@@ -20,7 +20,7 @@ fn plain_window(
         .with_decorations(false)
         .with_resizable(false)
         .with_inner_size(size)
-        .with_position(crate::gfx::win_pos(pos.x, pos.y))
+        .with_position(crate::units::win_pos(pos.x, pos.y))
         .with_window_level(WindowLevel::AlwaysOnTop)
         .with_active(false);
     let attrs = crate::gfx::tool_window(attrs);
@@ -73,7 +73,7 @@ impl RecFrame {
             let Ok(win) = plain_window(
                 el,
                 Point::new(r.x, r.y),
-                crate::gfx::size_units(r.w, r.h),
+                crate::units::size_units(r.w, r.h),
                 true,
             ) else {
                 continue;
@@ -144,7 +144,7 @@ impl Island {
         let win = plain_window(
             el,
             at,
-            crate::gfx::size_px(ISLAND_W * sf, ISLAND_H * sf, sf),
+            crate::units::size_px(ISLAND_W * sf, ISLAND_H * sf, sf),
             false,
         )?;
         let sf = win.scale_factor() as f32;
@@ -170,7 +170,7 @@ impl Island {
     }
 
     pub fn rect(&self) -> Rect {
-        crate::gfx::outer_rect(&self.sw.window)
+        crate::units::outer_rect(&self.sw.window)
     }
 
     pub fn draw(&mut self) {

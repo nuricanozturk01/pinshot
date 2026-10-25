@@ -72,8 +72,8 @@ impl OcrWin {
         let attrs = Window::default_attributes()
             .with_title("PinShot – OCR")
             .with_resizable(crate::gfx::DIALOG_RESIZABLE)
-            .with_inner_size(crate::gfx::size_px(W * sf, H * sf, sf))
-            .with_position(crate::gfx::win_pos(at.x, at.y))
+            .with_inner_size(crate::units::size_px(W * sf, H * sf, sf))
+            .with_position(crate::units::win_pos(at.x, at.y))
             .with_window_level(WindowLevel::AlwaysOnTop);
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         let sf = window.scale_factor() as f32;

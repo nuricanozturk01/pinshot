@@ -426,9 +426,8 @@ mod native {
                     err_fn,
                     None,
                 ),
-                other => Err(cpal::BuildStreamError::StreamConfigNotSupported).map_err(|e| {
+                other => Err(cpal::BuildStreamError::StreamConfigNotSupported).inspect_err(|_| {
                     log::warn!("unsupported sample format {other:?}");
-                    e
                 }),
             };
             let stream = match built.and_then(|s| {

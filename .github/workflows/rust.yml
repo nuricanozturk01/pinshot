@@ -70,11 +70,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Linux libraries
         if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libx11-dev libxcb1-dev libdbus-1-dev ffmpeg
       - run: cargo test --workspace
+      # the lint job runs on Linux only: lint the Windows-only code too
+      - name: Clippy (Windows)
+        if: runner.os == 'Windows'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # real desktop session on the runner: the first frame of a window must reach the screen, and the screen
+      # must be capturable. (--selftest also reports ffmpeg, which the runner does not have, so it only informs.)
+      - name: Window smoke test and self-test (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build -p pinshot
+          ./target/debug/pinshot.exe --selftest || true
+          ./target/debug/pinshot.exe --selftest-window
 
   # Ubuntu 24.04+ sessions are Wayland: run the app in a headless sway (screenshots through grim).
   wayland:

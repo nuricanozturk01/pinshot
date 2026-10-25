@@ -71,12 +71,8 @@ pub fn paint(text: &str, sf: f32) -> Pixmap {
 
 /// Bottom-right corner of `area` for a toast of `w`×`h` pixels (desktop units: pixels, points on macOS).
 fn place(area: Rect, w: u32, h: u32, sf: f32) -> winit::dpi::Position {
-    let u = if cfg!(target_os = "macos") {
-        1.0 / sf
-    } else {
-        1.0
-    }; // desktop units per pixel
-    crate::gfx::win_pos(
+    let u = crate::units::per_px(sf); // desktop units per pixel
+    crate::units::win_pos(
         area.right() - (w as f32 + 24.0 * sf) * u,
         area.bottom() - (h as f32 + 64.0 * sf) * u,
     )
@@ -94,7 +90,7 @@ impl Toast {
             let _ = self
                 .sw
                 .window
-                .request_inner_size(crate::gfx::size_px(w as f32, h as f32, real));
+                .request_inner_size(crate::units::size_px(w as f32, h as f32, real));
             self.sw
                 .window
                 .set_outer_position(place(self.area, w, h, real));
@@ -143,7 +139,7 @@ impl Toast {
             .with_title("PinShot")
             .with_decorations(false)
             .with_resizable(false)
-            .with_inner_size(crate::gfx::size_px(w as f32, h as f32, sf))
+            .with_inner_size(crate::units::size_px(w as f32, h as f32, sf))
             .with_position(pos)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_active(false);
