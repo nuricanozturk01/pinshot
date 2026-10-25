@@ -173,6 +173,15 @@ impl Session {
         Some(Rect::from_points(a, b))
     }
 
+    /// The area the undimmed window under the pointer takes in window `g` (with room for its outline).
+    pub fn hover_extent(&self, g: &Geom) -> Option<IRect> {
+        let r = self.hover_px(g.mon)?;
+        let full = IRect::new(0, 0, g.size.0, g.size.1);
+        IRect::around(r.x, r.y, r.w, r.h)
+            .inflate((3.0 * g.sf).ceil() as i32)
+            .intersect(&full)
+    }
+
     /// Toolbar top-left in the host window's UI units, if the toolbar is visible there.
     pub fn toolbar_origin(&self, g: &Geom) -> Option<Point> {
         if self.rec.is_some()
@@ -251,6 +260,13 @@ impl Session {
     /// the edges that move are all outside it), so only the strips around the edges need redrawing.
     pub fn draw_core(&self, g: &Geom) -> Option<IRect> {
         use pinshot_core::editor::Mode;
+        // a selection being dragged out or resized: the inside looks the same in every frame, only the border,
+        // the handles and the size label (all within `margin` of the edge) move
+        if matches!(self.editor.mode, Mode::SelNew | Mode::SelResize) {
+            let s = self.sel_px(g.mon)?;
+            let core = IRect::around(s.x, s.y, s.w, s.h).inflate(-((44.0 * g.sf) as i32));
+            return (core.w > 0 && core.h > 0).then_some(core);
+        }
         let it = self.editor.cur.as_ref().filter(|it| {
             self.editor.mode == Mode::Draw && it.kind == Kind::Rect && it.pts.len() >= 2
         })?;
@@ -676,6 +692,55 @@ pub mod tests {
             })
             .count();
         assert_eq!(differing, 0, "{differing} pixels differ from a full redraw");
+    }
+
+    /// Dragging out a selection redraws only the strips around its border; every frame must equal a full redraw.
+    #[test]
+    fn selection_drag_redraws_only_edge_strips_and_matches_a_full_frame() {
+        let mut s = session();
+        s.cursor = None;
+        let m = &crate::screens::tests_support::NoMeasure;
+        let g = geom(0);
+        let all = IRect::new(0, 0, 400, 300);
+        s.editor.press(Point::new(150.0, 120.0), Button::Left, m);
+        s.editor.moved(Point::new(300.0, 250.0), false);
+        let mut shown = s.compose(&g, all);
+        let (mut prev, mut prev_core) = (s.extent(&g).unwrap(), s.draw_core(&g).unwrap());
+        // grows, shrinks, and crosses the anchor so the size label jumps to another corner
+        for to in [(380.0, 290.0), (330.0, 200.0), (100.0, 40.0), (20.0, 20.0), (60.0, 260.0)] {
+            s.editor.moved(Point::new(to.0, to.1), false);
+            let (cur, cur_core) = (s.extent(&g).unwrap(), s.draw_core(&g));
+            let union = prev.union(&cur);
+            let strips = cur_core
+                .and_then(|c| prev_core.intersect(&c))
+                .map_or_else(|| vec![union], |hole| union.without(&hole));
+            for r in &strips {
+                let part = s.compose(&g, *r);
+                shown.draw_pixmap(
+                    r.x,
+                    r.y,
+                    part.as_ref(),
+                    &PixmapPaint {
+                        blend_mode: tiny_skia::BlendMode::Source,
+                        ..PixmapPaint::default()
+                    },
+                    Transform::identity(),
+                    None,
+                );
+            }
+            let full = s.compose(&g, all);
+            let differing = (0..300)
+                .flat_map(|y| (0..400).map(move |x| (x, y)))
+                .filter(|&(x, y)| px(&shown, x, y) != px(&full, x, y))
+                .count();
+            assert_eq!(differing, 0, "moved to {to:?}: {differing} pixels differ");
+            prev = cur;
+            if let Some(c) = cur_core {
+                prev_core = c;
+            } else {
+                break;
+            }
+        }
     }
 
     /// Dragging a big rectangle redraws only strips along its edges; the result must equal a full redraw.

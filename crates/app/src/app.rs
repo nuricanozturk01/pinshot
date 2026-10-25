@@ -77,12 +77,16 @@ struct OverlayWin {
     hint: bool,
     /// The window outline shown in the last frame (its undimmed area changes only when this does).
     hover_win: Option<Rect>,
+    /// The area that outline took, so a change of window only redraws the old and the new one.
+    hover_ext: Option<IRect>,
     /// Areas drawn by the latest frames (newest last): a swap-chain buffer that is older than the last frame also
     /// needs what those changed.
     history: Vec<IRect>,
     shown: bool,
     /// The unchanging inner part of the rectangle being drawn, as of the last frame.
     core: Option<IRect>,
+    /// When this window last drew: its own clock, so windows that have nothing to redraw do not use up its frame.
+    last_draw: Option<Instant>,
 }
 
 struct Overlay {
@@ -91,9 +95,10 @@ struct Overlay {
     last_click: Option<(Instant, Point)>,
     hover: Option<(Instant, usize, usize)>,
     saving: bool,
-    /// When a frame was last drawn, and the windows whose redraw was held back to keep to [`FRAME`].
-    last_draw: Option<Instant>,
+    /// The windows whose redraw was held back to keep to [`FRAME`].
     deferred: Vec<usize>,
+    /// The cursor icon last set on the overlay windows; setting it again on every pointer move costs a round trip.
+    cursor_icon: Option<CursorIcon>,
 }
 
 pub struct App {
@@ -393,9 +398,11 @@ impl App {
                                 full: true,
                                 hint: true,
                                 hover_win: None,
+                                hover_ext: None,
                                 history: Vec::new(),
                                 shown: false,
                                 core: None,
+                                last_draw: None,
                             });
                         }
                         Err(e) => log::error!("surface: {e}"),
@@ -413,8 +420,8 @@ impl App {
             last_click: None,
             hover: None,
             saving: false,
-            last_draw: None,
             deferred: Vec::new(),
+            cursor_icon: None,
         });
         // the screenshot already contains the pins; as live always-on-top windows they would cover the overlay
         // and swallow the clicks meant for it
@@ -533,22 +540,20 @@ impl App {
     }
 
     fn draw_overlay_window(&mut self, win: usize) {
-        // a pointer sweep produces far more events than the display can show: draw at most once per frame
-        if let Some(ov) = self.overlay.as_mut() {
-            if ov.last_draw.is_some_and(|t| t.elapsed() < FRAME) {
-                if !ov.deferred.contains(&win) {
-                    ov.deferred.push(win);
-                }
-                return;
-            }
-            ov.last_draw = Some(Instant::now());
-        }
+        // a pointer sweep produces far more events than the display can show: draw each window at most once per frame
         let Some(ov) = self.overlay.as_mut() else {
             return;
         };
         let Some(w) = ov.wins.get_mut(win) else {
             return;
         };
+        if w.last_draw.is_some_and(|t| t.elapsed() < FRAME) {
+            if !ov.deferred.contains(&win) {
+                ov.deferred.push(win);
+            }
+            return;
+        }
+        w.last_draw = Some(Instant::now());
         w.sw.sync_size();
         let (pw, ph) = w.sw.size();
         let g = Geom {
@@ -560,13 +565,23 @@ impl App {
         let cur = ov.session.extent(&g);
         let hint = ov.session.editor.sel.is_none();
         let hover_win = ov.session.editor.hover_win.filter(|_| hint);
-        let damage = if w.full || hover_win != w.hover_win {
+        let hover_ext = ov.session.hover_extent(&g).filter(|_| hint);
+        let damage = if w.full {
             Some(full)
         } else {
             let moved = match (w.prev, cur) {
                 (Some(a), Some(b)) => Some(a.union(&b)),
                 (Some(a), None) | (None, Some(a)) => Some(a),
                 (None, None) => None,
+            };
+            // moving the outline to another window: the old and the new one
+            let moved = if hover_win == w.hover_win {
+                moved
+            } else {
+                [moved, w.hover_ext, hover_ext]
+                    .into_iter()
+                    .flatten()
+                    .reduce(|a, b| a.union(&b))
             };
             // the hint pill only changes when a selection starts or ends
             if hint == w.hint {
@@ -579,9 +594,10 @@ impl App {
         let Some(mut d) = damage.and_then(|d| d.intersect(&full)) else {
             return;
         };
+        let age = if d == full { 0 } else { w.sw.buffer_age() };
         if d != full {
             // buffers rotate on some systems (macOS, Wayland): bring an older buffer up to date, or redraw all
-            let age = usize::from(w.sw.buffer_age());
+            let age = usize::from(age);
             d = match age {
                 1 => d,
                 2..=4 if w.history.len() >= age - 1 => w.history[w.history.len() - (age - 1)..]
@@ -594,16 +610,18 @@ impl App {
         }
         // a rectangle being dragged out only changes along its edges: skip the unchanged inside
         let core_now = ov.session.draw_core(&g);
-        let strips = match (d != full && w.sw.buffer_age() == 1, w.core, core_now) {
+        let strips = match (d != full && age == 1, w.core, core_now) {
             (true, Some(a), Some(b)) => a
                 .intersect(&b)
                 .map(|hole| d.without(&hole))
                 .filter(|v| v.len() > 1 || v.first() != Some(&d)),
             _ => None,
         };
-        let cursor_here = screens::cursor_pos()
-            .map(|p| ov.session.caps[g.mon].monitor.rect.contains(p))
-            .unwrap_or(win == 0);
+        // only the first frame of a window needs it (to pick the window that takes focus)
+        let cursor_here = !w.shown
+            && screens::cursor_pos()
+                .map(|p| ov.session.caps[g.mon].monitor.rect.contains(p))
+                .unwrap_or(win == 0);
         let presented = if let Some(strips) = strips {
             let parts: Vec<_> = strips
                 .iter()
@@ -627,6 +645,7 @@ impl App {
                 w.core = core_now;
                 w.hint = hint;
                 w.hover_win = hover_win;
+                w.hover_ext = hover_ext;
                 w.full = false;
                 if !w.shown {
                     w.shown = true;
@@ -730,7 +749,8 @@ impl App {
         }
         let ov = self.overlay.as_mut().expect("overlay");
         ov.session.sync_toolbar();
-        if let Some(i) = icon {
+        if let Some(i) = icon.filter(|i| ov.cursor_icon != Some(*i)) {
+            ov.cursor_icon = Some(i);
             for w in &ov.wins {
                 w.sw.window.set_cursor(i);
             }
@@ -2137,16 +2157,24 @@ impl ApplicationHandler<UserEvent> for App {
         let mut wake: Option<Instant> = self.toasts.iter().map(|t| t.deadline).min();
         if let Some(ov) = self.overlay.as_mut() {
             if !ov.deferred.is_empty() {
-                let due = ov.last_draw.map_or_else(Instant::now, |t| t + FRAME);
-                if Instant::now() >= due {
-                    for w in std::mem::take(&mut ov.deferred) {
-                        if let Some(w) = ov.wins.get(w) {
-                            w.sw.window.request_redraw();
-                        }
-                    }
-                } else {
+                let now = Instant::now();
+                let due_of = |w: usize| {
+                    ov.wins
+                        .get(w)
+                        .and_then(|w| w.last_draw)
+                        .map_or(now, |t| t + FRAME)
+                };
+                let (ready, waiting): (Vec<usize>, Vec<usize>) =
+                    ov.deferred.iter().partition(|w| now >= due_of(**w));
+                if let Some(due) = waiting.iter().map(|w| due_of(*w)).min() {
                     wake = Some(wake.map_or(due, |w| w.min(due)));
                 }
+                for w in ready {
+                    if let Some(w) = ov.wins.get(w) {
+                        w.sw.window.request_redraw();
+                    }
+                }
+                ov.deferred = waiting;
             }
             if let Some((since, win, _)) = ov.hover {
                 let due = since + TOOLTIP_DELAY;
