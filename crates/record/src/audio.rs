@@ -87,6 +87,8 @@ fn pcm_path(kind: &str) -> PathBuf {
 struct ChildCapture {
     child: Child,
     err_path: PathBuf,
+    /// The program has no way to be told to stop (it writes raw PCM, so killing it loses nothing).
+    kill_on_stop: bool,
 }
 
 impl ChildCapture {
@@ -122,7 +124,11 @@ impl ChildCapture {
                 }
             });
         }
-        let mut cap = ChildCapture { child, err_path };
+        let mut cap = ChildCapture {
+            child,
+            err_path,
+            kill_on_stop: false,
+        };
         let end = Instant::now() + timeout;
         while Instant::now() < end {
             let up = if ready_line.is_some() {
@@ -162,6 +168,10 @@ impl ChildCapture {
     }
 
     fn request_stop(&mut self) {
+        if self.kill_on_stop {
+            let _ = self.child.kill();
+            return;
+        }
         if let Some(mut stdin) = self.child.stdin.take() {
             let _ = stdin.write_all(b"q\n");
         }
@@ -242,6 +252,38 @@ fn pulse_default_mic(mics: &[(String, String)]) -> Option<String> {
     let def = pactl(&["get-default-source"]).filter(|s| !s.is_empty() && !s.ends_with(".monitor"));
     def.filter(|d| mics.iter().any(|(n, _)| n == d))
         .or_else(|| mics.first().map(|(n, _)| n.clone()))
+}
+
+/// Record PulseAudio/PipeWire source `src` as raw PCM into `path`. `parec` (shipped with `pactl`) is preferred: the
+/// ffmpeg builds that get bundled with the app have no `pulse` input at all.
+#[cfg(target_os = "linux")]
+fn start_pulse_capture(
+    ffmpeg: &Path,
+    src: &str,
+    path: &Path,
+) -> Result<(ChildCapture, f64), String> {
+    let has_parec = Command::new("parec")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    let timeout = Duration::from_secs(5);
+    if has_parec {
+        let mut cmd = Command::new("parec");
+        cmd.arg(format!("--device={src}"))
+            .args(["--format=s16le", "--rate=48000", "--channels=2"])
+            .arg(path);
+        match ChildCapture::start(cmd, path, None, timeout) {
+            Ok((mut cap, started)) => {
+                cap.kill_on_stop = true;
+                return Ok((cap, started));
+            }
+            Err(e) => log::warn!("parec could not capture {src}: {e}; trying ffmpeg"),
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    let cmd = ffmpeg_capture_cmd(ffmpeg, &["-f", "pulse", "-i", src], path);
+    ChildCapture::start(cmd, path, None, timeout)
+        .map_err(|e| format!("{e} (install `pulseaudio-utils` for audio recording)"))
 }
 
 fn ffmpeg_capture_cmd(exe: &Path, input: &[&str], out: &Path) -> Command {
@@ -664,8 +706,7 @@ impl AudioRecorder {
                     .or_else(|| pulse_default_mic(&mics))
                     .ok_or("no microphone found")?
             };
-            let cmd = ffmpeg_capture_cmd(ffmpeg, &["-f", "pulse", "-i", &src], &path);
-            let (cap, started) = ChildCapture::start(cmd, &path, None, Duration::from_secs(5))?;
+            let (cap, started) = start_pulse_capture(ffmpeg, &src, &path)?;
             Ok(Source {
                 track: track(started, RATE, 2),
                 cap: Capturing::Child(cap),
