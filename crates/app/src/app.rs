@@ -49,6 +49,8 @@ pub enum UserEvent {
     FolderChosen(Option<PathBuf>),
 }
 
+/// The overlay redraws at most this often (about 60 frames per second).
+const FRAME: Duration = Duration::from_millis(16);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const TOOLTIP_DELAY: Duration = Duration::from_millis(450);
 
@@ -84,6 +86,9 @@ struct Overlay {
     last_click: Option<(Instant, Point)>,
     hover: Option<(Instant, usize, usize)>,
     saving: bool,
+    /// When a frame was last drawn, and the windows whose redraw was held back to keep to [`FRAME`].
+    last_draw: Option<Instant>,
+    deferred: Vec<usize>,
 }
 
 pub struct App {
@@ -414,6 +419,8 @@ impl App {
             last_click: None,
             hover: None,
             saving: false,
+            last_draw: None,
+            deferred: Vec::new(),
         });
         self.redraw_all();
     }
@@ -524,6 +531,16 @@ impl App {
     }
 
     fn draw_overlay_window(&mut self, win: usize) {
+        // a pointer sweep produces far more events than the display can show: draw at most once per frame
+        if let Some(ov) = self.overlay.as_mut() {
+            if ov.last_draw.is_some_and(|t| t.elapsed() < FRAME) {
+                if !ov.deferred.contains(&win) {
+                    ov.deferred.push(win);
+                }
+                return;
+            }
+            ov.last_draw = Some(Instant::now());
+        }
         let Some(ov) = self.overlay.as_mut() else {
             return;
         };
@@ -2094,6 +2111,18 @@ impl ApplicationHandler<UserEvent> for App {
         }
         let mut wake: Option<Instant> = self.toasts.iter().map(|t| t.deadline).min();
         if let Some(ov) = self.overlay.as_mut() {
+            if !ov.deferred.is_empty() {
+                let due = ov.last_draw.map_or_else(Instant::now, |t| t + FRAME);
+                if Instant::now() >= due {
+                    for w in std::mem::take(&mut ov.deferred) {
+                        if let Some(w) = ov.wins.get(w) {
+                            w.sw.window.request_redraw();
+                        }
+                    }
+                } else {
+                    wake = Some(wake.map_or(due, |w| w.min(due)));
+                }
+            }
             if let Some((since, win, _)) = ov.hover {
                 let due = since + TOOLTIP_DELAY;
                 if Instant::now() >= due {
