@@ -3,9 +3,16 @@ name: Rust
 on:
   push:
     branches: [rust]
-    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "assets/fonts/**", ".github/workflows/rust.yml"]
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "assets/**", "tools/wayland_ci.sh", ".github/workflows/rust.yml"]
   pull_request:
-    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "assets/fonts/**", ".github/workflows/rust.yml"]
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "assets/**", "tools/wayland_ci.sh", ".github/workflows/rust.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,6 +20,7 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,6 +39,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -39,3 +48,29 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libx11-dev libxcb1-dev libdbus-1-dev ffmpeg
       - run: cargo test --workspace
+
+  # Ubuntu 24.04+ sessions are Wayland: run the app in a headless sway with the wlroots screenshot portal.
+  wayland:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Set to false once the job has passed on a few runs and should block merges.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Libraries and a headless Wayland session
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libx11-dev libxcb1-dev libdbus-1-dev ffmpeg \
+            sway xwayland grim xdg-desktop-portal xdg-desktop-portal-wlr dbus-x11 python3-pil
+      - run: cargo build -p pinshot
+      - name: PinShot under Wayland
+        run: tools/wayland_ci.sh target/debug/pinshot
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wayland-out
+          path: wayland-out/
+          retention-days: 7
