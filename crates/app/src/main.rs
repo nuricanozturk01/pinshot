@@ -1,5 +1,7 @@
+mod aboutwin;
 mod app;
 mod clip;
+mod colorwin;
 mod form;
 mod gfx;
 mod hotkeys;
@@ -12,6 +14,7 @@ mod recording;
 mod recpanel;
 mod recui;
 mod screens;
+mod selftest;
 mod session;
 mod settings;
 mod settingswin;
@@ -20,7 +23,7 @@ mod toolbar;
 mod tray;
 mod ui;
 
-const COMMANDS: [(&str, &str); 8] = [
+const COMMANDS: [(&str, &str); 9] = [
     ("--capture", "capture"),
     ("--fullscreen", "fullscreen"),
     ("--repeat", "repeat"),
@@ -28,6 +31,7 @@ const COMMANDS: [(&str, &str); 8] = [
     ("--record", "record"),
     ("--stop-recording", "stop_record"),
     ("--settings", "settings"),
+    ("--about", "about"),
     ("--quit", "quit"),
 ];
 
@@ -36,6 +40,9 @@ fn main() {
     if args.iter().any(|a| a == "--version") {
         println!("PinShot {}", env!("CARGO_PKG_VERSION"));
         return;
+    }
+    if args.iter().any(|a| a == "--selftest") {
+        std::process::exit(selftest::run());
     }
     logging::init(std::env::var_os("PINSHOT_LOG_STDERR").is_some() || cfg!(debug_assertions));
     let cmd = COMMANDS

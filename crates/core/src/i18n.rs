@@ -59,6 +59,12 @@ pub fn tr(s: &'static str) -> &'static str {
 }
 
 pub static EN: &[(&str, &str)] = &[
+    ("Sürüm", "Version"),
+    ("Yakala, işaretle, sabitle, metni tanı ve ekranı kaydet.", "Capture, annotate, pin, recognise text and record your screen."),
+    ("Proje sayfası", "Project page"),
+    ("Log klasörü", "Log folder"),
+    ("Renk", "Colour"),
+    ("Tamam", "OK"),
     ("Ayarlar", "Settings"),
     ("Otomatik başlatma ayarlanamadı", "Could not change start at sign-in"),
     ("Kayıt", "Saving"),
