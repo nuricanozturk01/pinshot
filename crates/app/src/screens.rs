@@ -460,7 +460,28 @@ mod portal {
         Some(std::path::PathBuf::from(String::from_utf8(out).ok()?))
     }
 
+    /// The whole desktop as one image: the screenshot portal first (GNOME, KDE), `grim` for wlroots compositors
+    /// (sway, Hyprland), whose portal backend cannot take screenshots.
     fn desktop_image() -> Result<image::RgbaImage, String> {
+        portal_image().or_else(|portal_err| {
+            grim_image().map_err(|grim_err| format!("{portal_err}; grim: {grim_err}"))
+        })
+    }
+
+    fn grim_image() -> Result<image::RgbaImage, String> {
+        let out = std::process::Command::new("grim")
+            .args(["-t", "png", "-"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        image::load_from_memory(&out.stdout)
+            .map(|i| i.to_rgba8())
+            .map_err(|e| e.to_string())
+    }
+
+    fn portal_image() -> Result<image::RgbaImage, String> {
         let shot = async_io::block_on(async {
             ashpd::desktop::screenshot::Screenshot::request()
                 .interactive(false)

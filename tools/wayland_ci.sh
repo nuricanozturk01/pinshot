@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs PinShot inside a headless sway (wlroots) Wayland session with xdg-desktop-portal-wlr, the way Ubuntu's
-# Wayland session behaves: portal screenshot, native Wayland windows, XWayland for the monitor list.
+# Runs PinShot inside a headless sway (wlroots) Wayland session: native Wayland windows, XWayland for the monitor
+# list, screen capture through grim.
 # usage: tools/wayland_ci.sh <path-to-pinshot-binary>   (artifacts land in $OUT, default ./wayland-out)
 set -euo pipefail
 
@@ -26,7 +26,7 @@ CONF
 pids=()
 dump() {
   echo "::group::diagnostics"
-  for f in portal-wlr portal pinshot; do
+  for f in pinshot; do
     echo "--- $f.log"; tail -n 40 "$OUT/$f.log" 2>/dev/null || true
   done
   echo "--- xwayland.log (without keymap warnings)"
@@ -62,23 +62,8 @@ export DISPLAY=:9
 wait_for "xwayland" test -S /tmp/.X11-unix/X9
 
 eval "$(dbus-launch --sh-syntax)"
-# xdg-desktop-portal-wlr connects to PipeWire at start-up (even for plain screenshots)
-start pipewire pipewire
-wait_for "the PipeWire socket" test -S "$XDG_RUNTIME_DIR/pipewire-0"
-
-for p in /usr/libexec/xdg-desktop-portal-wlr /usr/lib/xdg-desktop-portal-wlr; do
-  [ -x "$p" ] && start portal-wlr "$p" && break
-done
-sleep 1
-for p in /usr/libexec/xdg-desktop-portal /usr/lib/xdg-desktop-portal; do
-  [ -x "$p" ] && start portal "$p" -r -v && break
-done
-has_owner() {
-  dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
-    org.freedesktop.DBus.NameHasOwner string:"$1" | grep -q "boolean true"
-}
-wait_for "the portal frontend on the session bus" has_owner org.freedesktop.portal.Desktop
-wait_for "the wlr portal backend" has_owner org.freedesktop.impl.portal.desktop.wlr
+# The wlroots portal backend cannot take screenshots, so PinShot falls back to `grim` here, exactly as it does on a
+# real sway or Hyprland desktop. (GNOME and KDE have a Screenshot portal; that path is not covered by this job.)
 
 # 1. self-test: monitors via XWayland, screenshot through the portal, OCR, ffmpeg
 "$BIN" --selftest | tee "$OUT/selftest.txt"
