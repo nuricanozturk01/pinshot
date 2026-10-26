@@ -89,12 +89,15 @@ impl App {
             self.owners.remove(&p.sw.window.id());
         }
         self.close_popup();
+        crate::mem::release_unused();
     }
 
     pub(super) fn close_pin(&mut self, id: u64) {
         if let Some(i) = self.pins.iter().position(|p| p.id == id) {
             let p = self.pins.remove(i);
             self.owners.remove(&p.sw.window.id());
+            drop(p);
+            crate::mem::release_unused();
         }
         if self.popup.as_ref().map(|p| p.owner) == Some(id) {
             self.close_popup();

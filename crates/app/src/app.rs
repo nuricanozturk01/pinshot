@@ -61,6 +61,8 @@ pub enum UserEvent {
 const FRAME: Duration = Duration::from_millis(16);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const TOOLTIP_DELAY: Duration = Duration::from_millis(450);
+/// How long the OCR models stay in memory after the last recognition.
+const OCR_IDLE: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Owner {
@@ -238,6 +240,7 @@ impl App {
     fn expire_toasts(&mut self) {
         let now = Instant::now();
         let owners = &mut self.owners;
+        let before = self.toasts.len();
         self.toasts.retain(|t| {
             let keep = t.deadline > now;
             if !keep {
@@ -245,6 +248,9 @@ impl App {
             }
             keep
         });
+        if self.toasts.len() < before {
+            crate::mem::release_unused();
+        }
     }
 
     fn reload_hotkeys(&mut self, el: &ActiveEventLoop) {
@@ -493,16 +499,24 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.expire_toasts();
+        let mut wake: Option<Instant> = self.toasts.iter().map(|t| t.deadline).min();
         if let Some(t) = self.ocr_last_use {
-            let due = t + Duration::from_secs(300);
+            let mut due = t + OCR_IDLE;
             if Instant::now() >= due {
                 if let Ok(mut g) = self.ocr_engine.try_lock() {
                     *g = None; // free the engine's memory after 5 idle minutes
+                    drop(g);
                     self.ocr_last_use = None;
+                    crate::mem::release_unused();
+                } else {
+                    due = Instant::now() + Duration::from_secs(5); // recognition still running: ask again soon
                 }
             }
+            // nothing else may wake an idle tray app, so the timeout has to
+            if self.ocr_last_use.is_some() {
+                wake = Some(wake.map_or(due, |w| w.min(due)));
+            }
         }
-        let mut wake: Option<Instant> = self.toasts.iter().map(|t| t.deadline).min();
         if let Some(ov) = self.overlay.as_mut() {
             if !ov.deferred.is_empty() {
                 let now = Instant::now();

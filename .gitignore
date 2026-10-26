@@ -6,3 +6,5 @@ packaging/bin/
 /target/
 .venv/
 __pycache__/
+.idea/
+

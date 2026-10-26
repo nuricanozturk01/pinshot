@@ -118,11 +118,17 @@ impl PinWin {
     pub fn draw(&mut self) {
         self.sw.sync_size();
         let (w, h) = self.sw.size();
-        let scaled = match &self.cache {
-            Some(c) if c.width() == w && c.height() == h => c,
-            _ => {
-                self.cache = Some(scale_to(&self.image, w, h));
-                self.cache.as_ref().expect("just set")
+        // shown at its own size, the image is drawn as it is: a scaled copy would only double the memory
+        let scaled = if (self.image.width(), self.image.height()) == (w, h) {
+            self.cache = None;
+            &self.image
+        } else {
+            match &self.cache {
+                Some(c) if c.width() == w && c.height() == h => c,
+                _ => {
+                    self.cache = Some(scale_to(&self.image, w, h));
+                    self.cache.as_ref().expect("just set")
+                }
             }
         };
         let mut out = Pixmap::new(w, h).expect("window size");
@@ -180,12 +186,18 @@ impl PinWin {
 
 /// Resample to `w`×`h`: repeated halving for strong reductions, then bilinear.
 pub fn scale_to(src: &Pixmap, w: u32, h: u32) -> Pixmap {
-    let mut cur = src.clone();
-    while cur.width() / 2 >= w.max(1) && cur.height() / 2 >= h.max(1) {
-        cur = half(&cur);
+    // `src` is only copied when it already has the requested size
+    let mut halved: Option<Pixmap> = None;
+    loop {
+        let cur = halved.as_ref().unwrap_or(src);
+        if cur.width() / 2 < w.max(1) || cur.height() / 2 < h.max(1) {
+            break;
+        }
+        halved = Some(half(cur));
     }
+    let cur = halved.as_ref().unwrap_or(src);
     if cur.width() == w && cur.height() == h {
-        return cur;
+        return cur.clone();
     }
     let mut out = Pixmap::new(w.max(1), h.max(1)).expect("size");
     let sx = w as f32 / cur.width() as f32;
@@ -242,5 +254,13 @@ mod tests {
         assert_eq!((s.width(), s.height()), (10, 7));
         let big = Pixmap::new(1000, 600).unwrap();
         assert_eq!(scale_to(&big, 130, 80).width(), 130);
+        // the same size gives back the same pixels (and leaves the source alone)
+        let same = scale_to(&pm, 4, 4);
+        assert_eq!(same.data(), pm.data());
+        // a reduction halves from the source without touching it
+        let before = big.data().to_vec();
+        let small = scale_to(&big, 250, 150);
+        assert_eq!((small.width(), small.height()), (250, 150));
+        assert_eq!(big.data(), &before[..]);
     }
 }

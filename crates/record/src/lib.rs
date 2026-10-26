@@ -188,6 +188,8 @@ impl Recorder {
                 if let Some(a) = audio.as_mut() {
                     a.request_stop(); // stop the sound at the same moment as the video
                 }
+                // the frame source holds a full-size frame copy; finishing the file can take a while
+                drop(grab);
                 let stats = Stats {
                     frames: e.frames(),
                     dropped: e.dropped(),

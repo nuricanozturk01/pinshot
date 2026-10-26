@@ -1,11 +1,30 @@
 //! Text measurement and glyph rasterisation with the embedded Noto Sans fonts (covers Turkish and most Latin scripts).
+//!
+//! `fontdue` expands every glyph of a font into outlines in memory (about 15 MB for the full 3884 glyphs of one Noto
+//! Sans face), so the always-loaded faces are Latin subsets. The full faces are parsed only when a character outside
+//! the subset (Cyrillic, Greek) is first used.
 
 use fontdue::{Font, FontSettings};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-static REGULAR: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
-static BOLD: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Bold.ttf");
+static REGULAR: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Regular-Latin.ttf");
+static BOLD: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Bold-Latin.ttf");
+static REGULAR_FULL: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
+static BOLD_FULL: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Bold.ttf");
+
+fn load(data: &[u8]) -> Font {
+    // INVARIANT: the bytes are the embedded font files
+    Font::from_bytes(
+        data,
+        FontSettings {
+            // glyphs are looked up by character, never by index, so ligature substitutions would only cost memory
+            load_substitutions: false,
+            ..FontSettings::default()
+        },
+    )
+    .expect("embedded font is valid")
+}
 
 /// Anything that can tell how large a piece of text is. Annotation hit-testing only needs this, so it can be tested
 /// with a trivial fake.
@@ -28,29 +47,46 @@ pub struct Glyph {
 pub struct Fonts {
     regular: Font,
     bold: Font,
+    full_regular: OnceLock<Font>,
+    full_bold: OnceLock<Font>,
     cache: Mutex<HashMap<(char, u32, bool), Glyph>>,
 }
 
 impl Fonts {
     pub fn embedded() -> &'static Fonts {
         static FONTS: OnceLock<Fonts> = OnceLock::new();
-        FONTS.get_or_init(|| {
-            let load = |data: &[u8]| {
-                Font::from_bytes(data, FontSettings::default()).expect("embedded font is valid")
-            };
-            Fonts {
-                regular: load(REGULAR),
-                bold: load(BOLD),
-                cache: Mutex::new(HashMap::new()),
-            }
-        })
+        FONTS.get_or_init(Fonts::new)
     }
 
+    fn new() -> Fonts {
+        Fonts {
+            regular: load(REGULAR),
+            bold: load(BOLD),
+            full_regular: OnceLock::new(),
+            full_bold: OnceLock::new(),
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The Latin subset: line metrics are the same in the full face.
     fn font(&self, bold: bool) -> &Font {
         if bold {
             &self.bold
         } else {
             &self.regular
+        }
+    }
+
+    /// The face that draws `ch`: the subset, or the full face for characters the subset lacks.
+    fn font_for(&self, ch: char, bold: bool) -> &Font {
+        let subset = self.font(bold);
+        if ch.is_control() || subset.lookup_glyph_index(ch) != 0 {
+            return subset;
+        }
+        if bold {
+            self.full_bold.get_or_init(|| load(BOLD_FULL))
+        } else {
+            self.full_regular.get_or_init(|| load(REGULAR_FULL))
         }
     }
 
@@ -71,7 +107,7 @@ impl Fonts {
     }
 
     pub fn advance(&self, ch: char, px: f32, bold: bool) -> f32 {
-        self.font(bold).metrics(ch, px).advance_width
+        self.font_for(ch, bold).metrics(ch, px).advance_width
     }
 
     pub fn line_width(&self, line: &str, px: f32, bold: bool) -> f32 {
@@ -84,7 +120,7 @@ impl Fonts {
         if let Some(g) = self.cache.lock().unwrap().get(&key) {
             return g.clone();
         }
-        let (m, coverage) = self.font(bold).rasterize(ch, key.1 as f32 / 4.0);
+        let (m, coverage) = self.font_for(ch, bold).rasterize(ch, key.1 as f32 / 4.0);
         let g = Glyph {
             width: m.width,
             height: m.height,
@@ -125,6 +161,48 @@ mod tests {
         for ch in "ğüşıöçĞÜŞİÖÇ".chars() {
             assert!(f.advance(ch, 20.0, false) > 5.0, "no glyph for {ch}");
         }
+    }
+
+    #[test]
+    fn subset_draws_like_the_full_faces() {
+        // a private instance: the shared one may have loaded the full faces for another test
+        let f = Fonts::new();
+        for bold in [false, true] {
+            let full = load(if bold { BOLD_FULL } else { REGULAR_FULL });
+            assert_eq!(
+                f.line_height(20.0, bold),
+                full.horizontal_line_metrics(20.0).unwrap().new_line_size
+            );
+            assert_eq!(
+                f.ascent(20.0, bold),
+                full.horizontal_line_metrics(20.0).unwrap().ascent
+            );
+            for ch in "Merhaba Dünya ğüşıöçĞÜŞİÖÇ 0123 −×·–…“”€₺".chars()
+            {
+                let (m, cov) = full.rasterize(ch, 20.0);
+                let g = f.glyph(ch, 20.0, bold);
+                assert_eq!(
+                    (g.width, g.height, g.xmin, g.ymin),
+                    (m.width, m.height, m.xmin, m.ymin)
+                );
+                assert_eq!(g.advance, m.advance_width, "advance of {ch}");
+                assert_eq!(g.coverage, cov, "bitmap of {ch}");
+            }
+        }
+        assert!(
+            f.full_regular.get().is_none(),
+            "Latin text must not load the full face"
+        );
+    }
+
+    #[test]
+    fn cyrillic_and_greek_fall_back_to_the_full_face() {
+        let f = Fonts::embedded();
+        for ch in "Привет Ωμέγα".chars().filter(|c| !c.is_whitespace()) {
+            assert!(f.advance(ch, 20.0, false) > 5.0, "no glyph for {ch}");
+            assert!(f.glyph(ch, 20.0, true).width > 0, "no bold glyph for {ch}");
+        }
+        assert!(f.full_regular.get().is_some() && f.full_bold.get().is_some());
     }
 
     #[test]
