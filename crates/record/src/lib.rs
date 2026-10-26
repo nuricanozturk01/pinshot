@@ -174,6 +174,8 @@ impl Recorder {
                         }
                     }
                 }
+                // the frame source holds a full-size frame copy; finishing the file can take a while
+                drop(grab);
                 let seconds = t0.elapsed().as_secs_f64().max(0.001);
                 let Some(mut e) = enc.lock().expect("encoder lock").take() else {
                     return;

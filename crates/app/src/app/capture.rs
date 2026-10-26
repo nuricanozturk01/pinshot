@@ -153,6 +153,7 @@ impl App {
         if let Some(pm) = pm {
             self.finish_image(el, &pm, tr("Tam ekran"));
         }
+        crate::mem::release_unused();
     }
 
     /// Capture the window that has the focus, decorations included.
@@ -163,10 +164,14 @@ impl App {
         };
         let Some(caps) = self.grab(el) else { return };
         let screens: Vec<_> = caps.iter().map(|c| c.screen()).collect();
-        match pinshot_core::compose::compose_region(&screens, rect) {
+        let composed = pinshot_core::compose::compose_region(&screens, rect);
+        drop(screens);
+        drop(caps);
+        match composed {
             Some((pm, _)) => self.finish_image(el, &pm, tr("Aktif pencere")),
             None => self.toast(el, tr("Aktif pencere bulunamadı")),
         }
+        crate::mem::release_unused();
     }
 
     pub(super) fn capture_last_region(&mut self, el: &ActiveEventLoop) {
@@ -176,10 +181,14 @@ impl App {
         };
         let Some(caps) = self.grab(el) else { return };
         let screens: Vec<_> = caps.iter().map(|c| c.screen()).collect();
-        match pinshot_core::compose::compose_region(&screens, Rect::new(x, y, w, h)) {
+        let composed = pinshot_core::compose::compose_region(&screens, Rect::new(x, y, w, h));
+        drop(screens);
+        drop(caps);
+        match composed {
             Some((pm, _)) => self.finish_image(el, &pm, tr("Son bölge")),
             None => self.toast(el, tr("Son bölge geçersiz")),
         }
+        crate::mem::release_unused();
     }
 
     /// Clipboard + optional auto-save + notification for an image that needs no editing.

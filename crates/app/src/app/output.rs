@@ -49,6 +49,8 @@ impl App {
             Err(e) => format!("{}: {e}", tr("Panoya kopyalanamadı")),
         };
         msg.push_str(&self.autosave(&pm));
+        drop(pm);
+        crate::mem::release_unused(); // `close_overlay` ran while the picture was still alive
         self.toast(el, &msg);
     }
 
@@ -101,9 +103,15 @@ impl App {
         match pinshot_core::output::save_image(&pm, &path, self.cfg.quality) {
             Ok(()) => {
                 let _ = self.clip.set_image(&pm);
+                drop(pm);
+                crate::mem::release_unused();
                 self.toast(el, &format!("{}: {}", tr("Kaydedildi"), path.display()));
             }
-            Err(e) => self.toast(el, &format!("{}: {e}", tr("Kaydedilemedi"))),
+            Err(e) => {
+                drop(pm);
+                crate::mem::release_unused();
+                self.toast(el, &format!("{}: {e}", tr("Kaydedilemedi")));
+            }
         }
     }
 }

@@ -52,12 +52,15 @@ impl App {
                 }
                 guard.as_mut().expect("engine").recognize(&img)
             })();
+            // free the picture before the main thread is told, so its memory sweep can return it
+            drop(img);
             let _ = proxy.send_event(UserEvent::OcrDone(id, result));
         });
     }
 
     pub(super) fn ocr_done(&mut self, id: u64, result: Result<String, String>) {
         self.ocr_last_use = Some(Instant::now());
+        crate::mem::release_unused(); // the recognition buffers are gone by now
         let Some(i) = self.ocr_wins.iter().position(|w| w.id == id) else {
             return;
         };
@@ -73,6 +76,8 @@ impl App {
         if let Some(i) = self.ocr_wins.iter().position(|w| w.id == id) {
             let w = self.ocr_wins.remove(i);
             self.owners.remove(&w.sw.window.id());
+            drop(w);
+            crate::mem::release_unused();
         }
     }
 

@@ -304,9 +304,10 @@ impl App {
             *r.ui.shared.lock().expect("island rect") = None;
             self.owners.remove(&r.ui.island.sw.window.id());
             match r.recorder.as_mut() {
-                Some(rec) => rec.cancel(),
+                Some(rec) => rec.cancel(), // joins the recording thread: its buffers are gone afterwards
                 None => self.start_abort = Some(Abort::Cancel),
             }
+            crate::mem::release_unused();
         }
     }
 
@@ -352,6 +353,7 @@ impl App {
                     self.stop_recording(el);
                 }
                 self.rec_finalizing = None;
+                crate::mem::release_unused();
                 self.toast(el, &format!("{}: {e}", tr("Kayıt başarısız")));
             }
             RecEvent::Finished(path, stats) => {
@@ -365,6 +367,9 @@ impl App {
     }
 
     fn rec_finished(&mut self, el: &ActiveEventLoop, path: PathBuf, st: Stats) {
+        // the recorder's frame buffers are freed by now (the recording thread may still be winding down: the sweep
+        // when the notification below expires returns whatever it held)
+        crate::mem::release_unused();
         let before = self.rec_finalizing.take();
         self.last_output = Some(path.clone());
         let untouched = before
