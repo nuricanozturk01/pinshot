@@ -72,6 +72,7 @@ impl MenuWin {
             open_sub: None,
         };
         w.paint();
+        w.sw.window.request_redraw();
         Ok(w)
     }
 
